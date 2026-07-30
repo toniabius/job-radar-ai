@@ -222,17 +222,26 @@ function saveConfig(config: AppConfig): void {
 // Initial bootstrap load to create config files
 loadConfig();
 
-function parseResumeDetails(content: string): ResumeData {
+function parseResumeDetails(content: string, configSkills?: string[]): ResumeData {
   const expInfo = extractExperienceInfo(content);
   let experienceYears = expInfo.experienceYears;
 
-  const commonSkills = [
+  // Use config skills as the primary vocabulary; fall back to a broad baseline so
+  // the function still works when called before config is available.
+  const baselineSkills = [
     "TypeScript", "JavaScript", "React", "Node.js", "Python", "Java", "C++", "Go", "Rust",
-    "SQL", "PostgreSQL", "MongoDB", "Redis", "AWS", "GCP", "Docker", "Kubernetes",
+    "SQL", "PostgreSQL", "MongoDB", "Redis", "AWS", "GCP", "Azure", "Docker", "Kubernetes",
     "GraphQL", "REST API", "Tailwind CSS", "Vite", "Express", "Distributed Systems",
-    "Machine Learning", "System Design", "Microservices", "CI/CD"
+    "Machine Learning", "System Design", "Microservices", "CI/CD", "Terraform", "Spring Boot",
+    "Angular", "Vue", "Kafka", "Snowflake", "Spark", "Scala", "Swift", "Kotlin",
   ];
-  const parsedSkills = commonSkills.filter((s) => new RegExp(`\\b${s.replace("+", "\\+")}\\b`, "i").test(content));
+  const skillVocabulary = configSkills && configSkills.length > 0
+    ? [...new Set([...configSkills, ...baselineSkills])]
+    : baselineSkills;
+
+  const parsedSkills = skillVocabulary.filter((s) =>
+    new RegExp(`\\b${s.replace(/[+.]/g, (c) => `\\${c}`)}\\b`, "i").test(content)
+  );
 
   return {
     title: "Resume",
@@ -244,20 +253,22 @@ function parseResumeDetails(content: string): ResumeData {
 }
 
 function loadResume(): ResumeData {
+  const config = loadConfig();
   try {
     if (fs.existsSync(RESUME_PATH)) {
       const markdown = fs.readFileSync(RESUME_PATH, "utf-8");
-      return parseResumeDetails(markdown);
+      return parseResumeDetails(markdown, config.skills);
     }
   } catch (err) {
     console.error("Error reading resume.md:", err);
   }
-  return parseResumeDetails("");
+  return parseResumeDetails("", config.skills);
 }
 
 function saveResume(content: string): ResumeData {
   writeFileIfChanged(RESUME_PATH, content);
-  return parseResumeDetails(content);
+  const config = loadConfig();
+  return parseResumeDetails(content, config.skills);
 }
 
 function loadJobsDB(): Job[] {
@@ -434,14 +445,51 @@ async function fetchLiveLinkedInJobs(
   return results;
 }
 
+function extractRequiredYoe(text: string): number {
+  // Match patterns like "12+ years", "10-15 years", "8 years of experience", "minimum 7 years"
+  const patterns = [
+    /(\d+)\+?\s*(?:to\s*\d+)?\s*years?\s*(?:of\s*)?(?:professional\s+|relevant\s+|related\s+|work\s+|industry\s+)?experience/i,
+    /minimum\s+(?:of\s+)?(\d+)\s*(?:\+)?\s*years?/i,
+    /at\s+least\s+(\d+)\s*(?:\+)?\s*years?/i,
+    /(\d+)\s*(?:\+)?\s*years?\s+(?:of\s+)?(?:professional|work|industry|relevant)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const yoe = parseInt(match[1], 10);
+      if (yoe > 0 && yoe <= 40) return yoe;
+    }
+  }
+  return 0;
+}
+
 function generateHeuristicEvaluation(job: Job, resume: ResumeData, config?: AppConfig) {
   const text = `${job.title} ${job.company} ${job.description || ''} ${job.department || ''}`.toLowerCase();
-  const resumeSkills = resume.parsedSkills || [
-    "TypeScript", "React", "Node.js", "Python", "Full Stack", "System Architecture", "REST API", "GraphQL"
-  ];
+
+  // Use the parsed skills from the resume (already driven by config.skills in parseResumeDetails).
+  // The fallback here is a last-resort safety net only — in normal operation parsedSkills is always populated.
+  const resumeSkills = resume.parsedSkills?.length
+    ? resume.parsedSkills
+    : (config?.skills ?? ["TypeScript", "React", "Node.js", "Python", "REST API", "GraphQL"]);
 
   const matchedSkills = resumeSkills.filter((s) => text.includes(s.toLowerCase()));
-  const missingSkills = resumeSkills.filter((s) => !text.includes(s.toLowerCase())).slice(0, 3);
+
+  // Skills the JOB requires that the candidate does NOT have.
+  // Scan the job text using config.skills + a broad baseline tech vocabulary.
+  const baselineJobVocab = [
+    "TypeScript", "JavaScript", "React", "Vue", "Angular", "Node.js", "Python", "Java", "C++", "Go", "Rust",
+    "SQL", "PostgreSQL", "MongoDB", "Redis", "AWS", "GCP", "Azure", "Docker", "Kubernetes",
+    "GraphQL", "REST", "Tailwind", "Vite", "Express", "Distributed Systems", "Kafka",
+    "Machine Learning", "System Design", "Microservices", "CI/CD", "Terraform", "Spring Boot",
+  ];
+  const jobScanVocab = config?.skills?.length
+    ? [...new Set([...config.skills, ...baselineJobVocab])]
+    : baselineJobVocab;
+
+  const jobRequiredSkills = jobScanVocab.filter((s) => text.includes(s.toLowerCase()));
+  const missingSkills = jobRequiredSkills
+    .filter((s) => !resumeSkills.some((rs) => rs.toLowerCase() === s.toLowerCase()))
+    .slice(0, 4);
 
   let baseScore = 70;
   if (text.includes("senior") || text.includes("staff") || text.includes("lead") || text.includes("principal")) {
@@ -462,13 +510,34 @@ function generateHeuristicEvaluation(job: Job, resume: ResumeData, config?: AppC
     }
   }
 
+  // Check YOE alignment — penalize hard when candidate is under-qualified
+  let yoePenalty = 0;
+  let yoeNote = "";
+  const candidateYoe = resume.experienceYears || 0;
+  const requiredYoe = extractRequiredYoe(`${job.title} ${job.description || ''}`);
+  if (candidateYoe > 0 && requiredYoe > 0) {
+    const gap = requiredYoe - candidateYoe;
+    if (gap >= 5) {
+      // Severe gap: 40-point penalty (mirrors Gemini prompt Rule #1)
+      yoePenalty = 40;
+      yoeNote = `Experience Gap: Candidate has ~${candidateYoe} years total experience, but role requires ${requiredYoe}+ years`;
+    } else if (gap >= 3) {
+      // Moderate gap
+      yoePenalty = 20;
+      yoeNote = `Experience Gap: Candidate has ~${candidateYoe} years experience; role prefers ${requiredYoe}+ years`;
+    } else if (gap >= 1) {
+      yoePenalty = 10;
+      yoeNote = `Minor experience gap: Candidate has ~${candidateYoe} years; role asks for ${requiredYoe}+ years`;
+    }
+  }
+
   let hash = 0;
   for (let i = 0; i < job.title.length; i++) {
     hash = (hash << 5) - hash + job.title.charCodeAt(i);
     hash |= 0;
   }
   const variance = (Math.abs(hash) % 11) - 5;
-  const finalScore = Math.min(96, Math.max(30, baseScore + variance - locationPenalty));
+  const finalScore = Math.min(96, Math.max(10, baseScore + variance - locationPenalty - yoePenalty));
 
   let matchLevel: 'Strong Match' | 'Good Match' | 'Weak Match' | 'Unmatched' = 'Good Match';
   if (finalScore >= 80) matchLevel = 'Strong Match';
@@ -485,16 +554,23 @@ function generateHeuristicEvaluation(job: Job, resume: ResumeData, config?: AppC
   if (locationNote) {
     reasons.push(locationNote);
   }
+  if (yoeNote) {
+    reasons.push(yoeNote);
+  }
 
   const missingList = [...missingSkills];
   if (locationNote) {
     missingList.unshift(`Location: ${job.location}`);
   }
+  if (yoeNote) {
+    missingList.unshift(yoeNote);
+  }
 
+  const noteSuffix = [locationNote ? '[Location penalty]' : '', yoeNote ? '[YOE penalty]' : ''].filter(Boolean).join(' ');
   return {
     score: finalScore,
     match_level: matchLevel,
-    summary: `The position of ${job.title} at ${job.company} (${job.location}) shows a ${finalScore}% match against candidate qualifications${locationNote ? ' [Location penalty applied]' : ''}.`,
+    summary: `The position of ${job.title} at ${job.company} (${job.location}) shows a ${finalScore}% match against candidate qualifications${noteSuffix ? ' ' + noteSuffix : ''}.`,
     reasons,
     missing_skills: missingList,
     recommended_actions: [
@@ -798,9 +874,10 @@ async function evaluateJobWithGemini(
   const selectedModel = configObj.gemini_model || "gemini-2.5-flash-lite";
 
   if (!hasValidApiKey()) {
+    const resumeParsed = parseResumeDetails(resumeContent, configObj.skills);
     const heur = generateHeuristicEvaluation(
       job,
-      { content: resumeContent, title: 'Resume', lastUpdated: '', parsedSkills: [], experienceYears: 0 },
+      resumeParsed,
       configObj
     );
     return { ...heur, model_used: "ATS Heuristic Engine" };
@@ -828,13 +905,17 @@ Description:
 ${job.description}
 
 EVALUATION & SCORING RULES:
-1. CRITICAL YEARS OF EXPERIENCE (YoE) COMPARISON RULE:
-   - Carefully compute the candidate's total professional work experience in years from the resume timeline (e.g., 5 years experience).
+1. CRITICAL YEARS OF EXPERIENCE (YoE) COMPARISON RULE — apply this FIRST before all other scoring:
+   - Carefully compute the candidate's total professional work experience in years from the resume timeline (e.g., start year of first job to present).
    - Extract the required minimum experience from the job posting (e.g., "8+ years required", "10+ years experience", "12+ years required").
-   - IF the candidate's total experience is significantly lower than required (for example, candidate has ~5 years experience, but job requires 8+, 10+, or 12+ years):
-     * You MUST deduct 30 to 50 points from the overall match score.
-     * You MUST explicitly list this experience gap in missing_skills (e.g., "Experience Gap: Candidate has ~5 years total experience, but role requires 12+ years").
-     * Set match_level to 'Weak Match' or 'Unmatched' if the experience gap is 5+ years.
+   - Apply the following MANDATORY deductions based on the gap (required YoE minus candidate YoE):
+     * Gap of 1-2 years: deduct 10 points
+     * Gap of 3-4 years: deduct 25 points, set match_level to at most 'Good Match'
+     * Gap of 5-7 years: deduct 40 points, set match_level to 'Weak Match'
+     * Gap of 8+ years: deduct 55 points, set match_level to 'Unmatched'
+   - These deductions are NON-NEGOTIABLE. Do NOT offset them with skill alignment bonuses.
+   - You MUST explicitly list the experience gap in missing_skills (e.g., "Experience Gap: Candidate has ~5 years total experience, but role requires 12+ years").
+   - EXAMPLE: If candidate has 5 years and job requires 12 years → gap is 7 years → deduct 40 points → 'Weak Match' regardless of skill overlap.
 
 2. SALARY & LOCATION ALIGNMENT:
    - If job location (${job.location}) is outside preferred locations (${configObj.locations ? configObj.locations.join(", ") : "Any"}), deduct 20-25 points and note the location mismatch.
@@ -842,13 +923,14 @@ EVALUATION & SCORING RULES:
 
 3. TECHNICAL & SKILLS ALIGNMENT:
    - Analyze overlap in core technologies, domain expertise, and responsibilities.
+   - Skill alignment bonuses should be moderate (max +15 points total) and cannot override a YoE penalty.
 
 Return JSON object matching schema:
 - score: integer (0-100)
 - match_level: "Strong Match" (>=80) | "Good Match" (60-79) | "Weak Match" (40-59) | "Unmatched" (<40)
 - summary: 2-3 sentence executive match summary highlighting fit and any major experience or skill gaps
 - reasons: 3-4 bullet strings of key alignments
-- missing_skills: list of missing skills, technical gaps, and experience year gaps
+- missing_skills: skills or qualifications the JOB REQUIRES that are absent or unclear in the candidate's resume. Do NOT list skills the candidate has just because they aren't mentioned in the job description. Only list genuine gaps where the job explicitly or implicitly requires something the resume does not demonstrate.
 - recommended_actions: 2-3 actionable advice strings for candidate application`;
 
     const response = await ai.models.generateContent({
@@ -904,9 +986,10 @@ Return JSON object matching schema:
     }
   }
 
+  const resumeParsed = parseResumeDetails(resumeContent, configObj.skills);
   const heur = generateHeuristicEvaluation(
     job,
-    { content: resumeContent, title: 'Resume', lastUpdated: '', parsedSkills: [], experienceYears: 0 },
+    resumeParsed,
     configObj
   );
   return { ...heur, model_used: "ATS Heuristic Fallback" };
