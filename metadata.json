@@ -1,0 +1,6 @@
+{
+  "name": "Job Radar AI",
+  "description": "Local-first AI job monitor, ATS provider pipeline, resume match evaluator, and Markdown report generator powered by Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

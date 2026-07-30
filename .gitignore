@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build & Compilation Outputs
+dist/
+build/
+coverage/
+
+# Environment Variables & Secret Files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# OS & IDE Files
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+
+# Local User Data, Databases & Generated Reports
+# Retain directory structure with .gitkeep while ignoring user data & generated outputs
+config/*
+!config/.gitkeep
+
+database/*
+!database/.gitkeep
+
+output/*
+!output/.gitkeep
+
+resume/*
+!resume/.gitkeep
