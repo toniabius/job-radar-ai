@@ -58,7 +58,25 @@ Job Radar AI uses a **Full-Stack Monolithic Architecture** combining a **React 1
   - `ConfigEditor.tsx`: Configurator for Target Roles (prioritized at top), Minimum Score Threshold (`minimum_score`), Target Companies (optional open web mode), Salary Ranges, Lookback Window (Hours, Days, Weeks, Months), and Preferred Locations.
   - `ScanProgressModal.tsx`: Terminal-styled console displaying real-time execution steps with a prominent **Cancel Scan** control.
   - `ReportView.tsx`: Rendered Markdown viewer with styled external listing links (`target="_blank" rel="noopener noreferrer"`).
+  - `DatabaseViewer.tsx`: Dedicated database manager providing full database inspection, provider filtering, single-job **AI Evaluate**, and **Evaluate All Pending** batch processing.
   - `JobCard.tsx` & `JobDetailsModal.tsx`: Rich job cards showing match levels, salary tags, missing skills, and recommended application actions.
+
+---
+
+## 🤖 Hybrid Match Evaluation Engine (Gemini AI + ATS Heuristic Fallback)
+
+To ensure zero downtime and robust candidate evaluation under all key configurations:
+1. **Primary Evaluation Mode**: Uses `@google/genai` with `gemini-2.5-flash` or `gemini-2.5-flash-lite` to perform structured prompt evaluation comparing job requirements against `resume.md`.
+2. **Resilient Fallback Mode**: If `GEMINI_API_KEY` is not configured or returns an authentication error (e.g., `API_KEY_INVALID`), the backend automatically flags `isApiKeyKnownInvalid` and redirects evaluation to a deterministic **ATS Heuristic Scoring Engine**.
+3. **ATS Heuristic Algorithm**: Calculates term overlap between candidate resume skills/experience and job title/description, generating deterministic fit scores (0-100%), matching reason lists, missing skill identification, and actionable cover letter guidance.
+
+---
+
+## 🛡️ Safe Write & Reload Guard Architecture
+
+To prevent unnecessary server restarts or Vite dev server reload loops during disk persistence:
+- **`writeFileIfChanged` Helper**: Compare incoming string payloads against existing file content on disk before executing `fs.writeFileSync`. If content is unchanged, disk writing is skipped.
+- **Vite Watch Ignored Paths**: `vite.config.ts` explicitly ignores file changes inside `config/`, `database/`, `resume/`, and `output/` directories, ensuring runtime data persistence never triggers client UI re-renders or connection refreshes.
 
 ---
 

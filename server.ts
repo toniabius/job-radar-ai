@@ -595,7 +595,10 @@ function generateMarkdownReport(jobs: Job[]): string {
 }
 
 // Initialize Gemini Client (lazy getter)
+let isApiKeyKnownInvalid = false;
+
 function hasValidApiKey(): boolean {
+  if (isApiKeyKnownInvalid) return false;
   const key = process.env.GEMINI_API_KEY;
   if (!key) return false;
   const trimmed = key.trim();
@@ -697,7 +700,13 @@ CRITICAL INSTRUCTION FOR EXPERIENCE COMPUTATION:
         extractedMarkdown = response.text || "";
         extractedMarkdown = extractedMarkdown.replace(/^```markdown\n?/i, "").replace(/^```\n?/, "").replace(/```$/, "").trim();
       } catch (aiErr: any) {
-        console.warn("Gemini AI PDF formatting warning:", aiErr.message);
+        const errMsg = aiErr?.message || String(aiErr);
+        if (errMsg.includes("API_KEY_INVALID") || errMsg.includes("API key not valid")) {
+          isApiKeyKnownInvalid = true;
+          console.log("Notice: Gemini API key invalid. Using direct PDF text parsing fallback.");
+        } else {
+          console.log("Notice: PDF formatting fallback to direct text extraction.");
+        }
       }
     }
 
@@ -886,7 +895,13 @@ Return JSON object matching schema:
       };
     }
   } catch (err: any) {
-    console.warn("Gemini API evaluation note:", err.message);
+    const errMsg = err?.message || String(err);
+    if (errMsg.includes("API_KEY_INVALID") || errMsg.includes("API key not valid")) {
+      isApiKeyKnownInvalid = true;
+      console.log("Notice: Gemini API key invalid or inactive. Falling back to ATS Heuristic Engine.");
+    } else {
+      console.log("Notice: Gemini evaluation fallback to ATS Heuristic Engine.");
+    }
   }
 
   const heur = generateHeuristicEvaluation(
@@ -906,10 +921,13 @@ app.post("/api/jobs/evaluate", async (req, res) => {
 
     if (jobId) {
       const found = allJobs.find((j) => j.id === jobId);
-      if (!found) {
+      if (found) {
+        jobToEval = found;
+      } else if (inputJob) {
+        jobToEval = inputJob;
+      } else {
         return res.status(404).json({ error: "Job not found" });
       }
-      jobToEval = found;
     } else if (inputJob) {
       jobToEval = inputJob;
     } else {

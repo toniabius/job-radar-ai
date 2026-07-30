@@ -8,6 +8,10 @@ interface DatabaseViewerProps {
   onResetDatabase: () => void;
   onDeleteJob: (id: string) => void;
   onToggleApplied: (job: Job, applied: boolean) => void;
+  onEvaluateJob?: (job: Job) => void;
+  onEvaluateAllJobs?: () => void;
+  evaluatingJobId?: string | null;
+  isBulkEvaluating?: boolean;
 }
 
 export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
@@ -15,6 +19,10 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
   onResetDatabase,
   onDeleteJob,
   onToggleApplied,
+  onEvaluateJob,
+  onEvaluateAllJobs,
+  evaluatingJobId,
+  isBulkEvaluating,
 }) => {
   const [search, setSearch] = useState('');
   const [providerFilter, setProviderFilter] = useState('ALL');
@@ -53,13 +61,32 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
           </div>
         </div>
 
-        <button
-          onClick={onResetDatabase}
-          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
-        >
-          <RotateCcw className="w-3.5 h-3.5 mr-1.5 text-amber-400" />
-          Reset Sample DB
-        </button>
+        <div className="flex items-center space-x-2">
+          {onEvaluateAllJobs && (
+            <button
+              type="button"
+              onClick={onEvaluateAllJobs}
+              disabled={isBulkEvaluating}
+              className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs transition-colors"
+              title="Evaluate all un-evaluated jobs with Gemini AI"
+            >
+              {isBulkEvaluating ? (
+                <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+              )}
+              Evaluate All Pending
+            </button>
+          )}
+
+          <button
+            onClick={onResetDatabase}
+            className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
+          >
+            <RotateCcw className="w-3.5 h-3.5 mr-1.5 text-amber-400" />
+            Reset Sample DB
+          </button>
+        </div>
       </div>
 
       {/* Controls & Search Bar */}
@@ -186,6 +213,22 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end space-x-2">
+                      {onEvaluateJob && job.score === undefined && (
+                        <button
+                          type="button"
+                          onClick={() => onEvaluateJob(job)}
+                          disabled={evaluatingJobId === job.id}
+                          className="inline-flex items-center px-2 py-1 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-colors"
+                          title="Run Gemini AI Match Evaluation"
+                        >
+                          {evaluatingJobId === job.id ? (
+                            <RefreshCw className="w-3 h-3 mr-1 animate-spin text-emerald-600" />
+                          ) : (
+                            <Sparkles className="w-3 h-3 mr-1 text-emerald-500" />
+                          )}
+                          AI Evaluate
+                        </button>
+                      )}
                       <a
                         href={ensureAbsoluteUrl(job.url, job.company, job.title)}
                         target="_blank"

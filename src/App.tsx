@@ -30,6 +30,7 @@ export default function App() {
     summary?: string;
   } | null>(null);
   const [evaluatingJobId, setEvaluatingJobId] = useState<string | null>(null);
+  const [isBulkEvaluating, setIsBulkEvaluating] = useState<boolean>(false);
   const [lastRunTime, setLastRunTime] = useState<string | undefined>(undefined);
 
   // Modals & Selections
@@ -171,7 +172,7 @@ export default function App() {
       const res = await fetch('/api/jobs/evaluate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId: job.id }),
+        body: JSON.stringify({ jobId: job.id, job }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -187,6 +188,35 @@ export default function App() {
       console.error('Evaluation error:', err);
     } finally {
       setEvaluatingJobId(null);
+    }
+  };
+
+  // Evaluate all pending jobs in batch
+  const handleEvaluateAllJobs = async () => {
+    setIsBulkEvaluating(true);
+    try {
+      const pendingJobs = jobs.filter((j) => j.score === undefined);
+      const jobsToEval = pendingJobs.length > 0 ? pendingJobs : jobs;
+      for (const job of jobsToEval) {
+        setEvaluatingJobId(job.id);
+        const res = await fetch('/api/jobs/evaluate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobId: job.id, job }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.job) {
+            setJobs((prev) => prev.map((j) => (j.id === data.job.id ? data.job : j)));
+          }
+        }
+      }
+      await fetchReport();
+    } catch (err) {
+      console.error('Bulk evaluation error:', err);
+    } finally {
+      setEvaluatingJobId(null);
+      setIsBulkEvaluating(false);
     }
   };
 
@@ -631,6 +661,10 @@ export default function App() {
             onResetDatabase={handleResetDatabase}
             onDeleteJob={handleDeleteJob}
             onToggleApplied={handleToggleApplied}
+            onEvaluateJob={handleEvaluateJob}
+            onEvaluateAllJobs={handleEvaluateAllJobs}
+            evaluatingJobId={evaluatingJobId}
+            isBulkEvaluating={isBulkEvaluating}
           />
         )}
 

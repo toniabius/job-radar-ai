@@ -132,18 +132,20 @@ export const JobCard: React.FC<JobCardProps> = ({
       {/* Action Footer */}
       <div className="pt-3 border-t border-slate-100 flex items-center justify-between mt-2">
         <div className="flex items-center space-x-2">
-          <button
-            onClick={() => onEvaluate(job)}
-            disabled={isEvaluating}
-            className="inline-flex items-center text-xs font-semibold text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 px-2.5 py-1.5 rounded-md transition-colors"
-          >
-            {isEvaluating ? (
-              <RefreshCw className="w-3.5 h-3.5 mr-1 animate-spin text-emerald-600" />
-            ) : (
-              <Sparkles className="w-3.5 h-3.5 mr-1 text-emerald-500" />
-            )}
-            {job.score !== undefined ? 'AI Re-Evaluate' : 'Run Gemini Match'}
-          </button>
+          {job.score === undefined && (
+            <button
+              onClick={() => onEvaluate(job)}
+              disabled={isEvaluating}
+              className="inline-flex items-center text-xs font-semibold text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 px-2.5 py-1.5 rounded-md transition-colors"
+            >
+              {isEvaluating ? (
+                <RefreshCw className="w-3.5 h-3.5 mr-1 animate-spin text-emerald-600" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5 mr-1 text-emerald-500" />
+              )}
+              Run Gemini Match
+            </button>
+          )}
           
           <button
             onClick={() => onDelete(job.id)}

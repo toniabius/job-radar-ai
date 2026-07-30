@@ -56,14 +56,16 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
           </div>
 
           <div className="flex items-center space-x-2">
-            <button
-              onClick={() => onEvaluate(job)}
-              disabled={isEvaluating}
-              className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-colors"
-            >
-              {isEvaluating ? <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
-              {job.score !== undefined ? 'AI Re-Evaluate' : 'Evaluate with Gemini'}
-            </button>
+            {job.score === undefined && (
+              <button
+                onClick={() => onEvaluate(job)}
+                disabled={isEvaluating}
+                className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-colors"
+              >
+                {isEvaluating ? <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
+                Evaluate with Gemini
+              </button>
+            )}
 
             <a
               href={ensureAbsoluteUrl(job.url, job.company, job.title)}

@@ -15,7 +15,8 @@ Job Radar AI systematically scans job boards and ATS platforms for target engine
 - **Optional Target Companies**: Filter by specific companies and ATS providers (Greenhouse, Lever, Workday, LinkedIn, etc.) or run in **Open Web Search Mode** across all platforms.
 - **Publication Lookback Window**: Configure flexible job publication lookback windows (e.g., *24 Hours*, *3 Days*, *2 Weeks*, *1 Month*) using customizable numbers and time units.
 - **Salary & Location Filtering**: Filter job opportunities by location preferences (e.g., California, Washington, Virginia, Maryland, Washington DC, Remote, Hybrid) and salary bounds.
-- **AI Match Engine**: Powered by Google's **Gemini AI API** (`@google/genai`) to generate quantitative fit scores (0-100%), detailed match reasons, missing skills gaps, and tailored cover letter action items.
+- **AI Match Engine**: Powered by Google's **Gemini AI API** (`@google/genai`) to generate quantitative fit scores (0-100%), detailed match reasons, missing skills gaps, and tailored cover letter action items. Automatically falls back to a deterministic **ATS Heuristic Engine** if an API key is missing or invalid.
+- **Database Viewer & Batch Evaluation**: Dedicated database management view offering live search, status filtering (Applied / Saved), single-click **AI Evaluate** for pending jobs, and **Evaluate All Pending** batch evaluation.
 - **Scan Progress Console & Reports**: Terminal modal interface displaying live job discovery steps, resume parsing status, and Gemini evaluation outputs. Formatted report view supports styled external application links.
 - **Saved Jobs & Status Tracking**: Bookmark favorites, filter qualified matches (Score ≥ 60%), mark application status (Applied / Interviewing / Offer / Saved), and export reports.
 
@@ -76,6 +77,7 @@ npm start
 │   │   ├── ScanProgressModal.tsx # Live terminal log modal with Cancel Scan control
 │   │   ├── ConfigEditor.tsx    # Role, company, threshold & lookback config panel
 │   │   ├── ReportView.tsx      # Formatted Markdown report viewer with threshold link gating
+│   │   ├── DatabaseViewer.tsx  # Direct database manager with search & batch evaluation
 │   │   ├── JobCard.tsx         # Detailed job item & AI evaluation breakdown
 │   │   └── ...
 │   ├── data/                   # Default seed data and fallback initial configurations
