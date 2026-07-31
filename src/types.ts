@@ -59,6 +59,20 @@ export interface ResumeData {
   experienceYears: number;
 }
 
+export interface UserProfile {
+  id: string;
+  name: string;
+  config: AppConfig;
+  resume: ResumeData;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProfilesData {
+  activeProfileId: string;
+  profiles: UserProfile[];
+}
+
 export interface PipelineLog {
   id: string;
   timestamp: string;

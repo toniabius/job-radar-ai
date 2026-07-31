@@ -8,6 +8,8 @@ Job Radar AI systematically scans job boards and ATS platforms for target engine
 
 ## 🌟 Key Features
 
+- **Candidate Profiles & Profile-Scoped Isolation**: Easily save, switch, and manage multiple candidate profiles (e.g. for yourself, colleagues, or friends). Switching profiles automatically isolates and switches the candidate's target config, resume, full job inventory (`database/profiles/<profileId>/jobs.db.json`), and scan history reports (`output/profiles/<profileId>/report.md`).
+- **Unified Config & Profiles Tab**: Merged the Resume and Config tabs into a streamlined **Config & Profiles** view with quick profile switching, candidate profile selection, duplicate, create, and delete controls.
 - **Instant Scan Cancellation**: Click the **Cancel Scan** button at any point during live scanning or AI evaluation to immediately stop the pipeline and abort backend tasks without storing unverified/partial results to your dashboard.
 - **Minimum Score Threshold for Listing Links**: Configure a match score threshold (e.g. `65%`). Scanned reports only include direct job posting links (`🔗 View Job Posting`) for listings meeting or exceeding this match threshold, keeping reports clean and focused on high-fit roles.
 - **PDF Resume Upload & AI Parsing**: Upload PDF resumes directly. Gemini AI automatically extracts contact details, experience, skills, and projects into structured Markdown (`resume.md`).
@@ -84,11 +86,13 @@ npm start
 │   ├── types.ts                # Global TypeScript interfaces & types
 │   └── main.tsx                # React Vite client entry point
 ├── database/                   # Persistent database directory (.gitkeep tracked)
-│   └── .gitkeep
-├── config/                     # User settings directory (.gitkeep tracked)
-│   └── .gitkeep
+│   ├── profiles/               # Profile-scoped job databases (database/profiles/<profileId>/jobs.db.json)
+│   └── jobs.db.json            # Active profile synced database
+├── config/                     # User settings and profiles store directory
+│   └── profiles.json           # Profiles store containing configurations & resumes
 ├── output/                     # Generated reports directory (.gitkeep tracked)
-│   └── .gitkeep
+│   ├── profiles/               # Profile-scoped scan history reports (output/profiles/<profileId>/reports/)
+│   └── report.md               # Active profile synced markdown report
 ├── resume/                     # Candidate resume store directory (.gitkeep tracked)
 │   └── .gitkeep
 └── package.json

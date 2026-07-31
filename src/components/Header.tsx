@@ -2,13 +2,14 @@ import React from 'react';
 import { Radar, Play, FileText, Database, Settings, User, Sparkles, Activity, History } from 'lucide-react';
 
 interface HeaderProps {
-  activeTab: 'dashboard' | 'database' | 'resume' | 'config' | 'report';
-  setActiveTab: (tab: 'dashboard' | 'database' | 'resume' | 'config' | 'report') => void;
+  activeTab: 'dashboard' | 'database' | 'config' | 'report';
+  setActiveTab: (tab: 'dashboard' | 'database' | 'config' | 'report') => void;
   onRunPipeline: () => void;
   isRunningPipeline: boolean;
   totalJobs: number;
   strongMatchesCount: number;
   minimumScoreThreshold?: number;
+  activeProfileName?: string;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,6 +20,7 @@ export const Header: React.FC<HeaderProps> = ({
   totalJobs,
   strongMatchesCount,
   minimumScoreThreshold = 65,
+  activeProfileName,
 }) => {
   return (
     <header className="border-b border-slate-200 bg-white/95 backdrop-blur-md sticky top-0 z-30">
@@ -45,6 +47,13 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Quick Metrics & Pipeline Run Action */}
           <div className="flex items-center space-x-3">
+            {activeProfileName && (
+              <div className="hidden sm:flex items-center space-x-1.5 px-3 py-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-semibold">
+                <User className="w-3.5 h-3.5 text-indigo-600" />
+                <span className="truncate max-w-[120px]">{activeProfileName}</span>
+              </div>
+            )}
+
             <div className="hidden lg:flex items-center space-x-4 mr-2 text-xs border-r border-slate-200 pr-4">
               <div className="flex items-center space-x-1.5 text-slate-600">
                 <Activity className="w-3.5 h-3.5 text-slate-400" />
@@ -86,6 +95,19 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           <button
+            onClick={() => setActiveTab('config')}
+            className={`inline-flex items-center px-3 py-2 border-b-2 text-xs font-medium whitespace-nowrap transition-colors ${
+              activeTab === 'config'
+                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-md font-bold'
+                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
+            }`}
+          >
+            <User className="w-4 h-4 mr-1 text-emerald-600" />
+            <Settings className="w-3.5 h-3.5 mr-1.5" />
+            Config & Profiles
+          </button>
+
+          <button
             onClick={() => setActiveTab('database')}
             className={`inline-flex items-center px-3 py-2 border-b-2 text-xs font-medium whitespace-nowrap transition-colors ${
               activeTab === 'database'
@@ -95,30 +117,6 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Database className="w-4 h-4 mr-1.5" />
             Full Job Inventory
-          </button>
-
-          <button
-            onClick={() => setActiveTab('resume')}
-            className={`inline-flex items-center px-3 py-2 border-b-2 text-xs font-medium whitespace-nowrap transition-colors ${
-              activeTab === 'resume'
-                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-md font-bold'
-                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
-            }`}
-          >
-            <User className="w-4 h-4 mr-1.5" />
-            Resume
-          </button>
-
-          <button
-            onClick={() => setActiveTab('config')}
-            className={`inline-flex items-center px-3 py-2 border-b-2 text-xs font-medium whitespace-nowrap transition-colors ${
-              activeTab === 'config'
-                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-md font-bold'
-                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
-            }`}
-          >
-            <Settings className="w-4 h-4 mr-1.5" />
-            Search Config
           </button>
 
           <button

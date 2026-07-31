@@ -5,6 +5,7 @@ import { ensureAbsoluteUrl } from '../utils/url';
 
 interface DatabaseViewerProps {
   jobs: Job[];
+  activeProfileName?: string;
   onResetDatabase: () => void;
   onDeleteJob: (id: string) => void;
   onToggleApplied: (job: Job, applied: boolean) => void;
@@ -16,6 +17,7 @@ interface DatabaseViewerProps {
 
 export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
   jobs,
+  activeProfileName,
   onResetDatabase,
   onDeleteJob,
   onToggleApplied,
@@ -53,9 +55,11 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
           <div>
             <div className="flex items-center space-x-2">
               <h2 className="font-bold text-base text-white">Full Job Inventory (`database/jobs.db`)</h2>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-amber-400/20 text-amber-300 border border-amber-400/30">
-                SQLite Persistence
-              </span>
+              {activeProfileName && (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
+                  Profile: {activeProfileName}
+                </span>
+              )}
             </div>
             <p className="text-xs text-slate-400">Stores tracked job postings, discovery timestamps, and Gemini AI score evaluations</p>
           </div>
@@ -84,7 +88,7 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
             className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
           >
             <RotateCcw className="w-3.5 h-3.5 mr-1.5 text-amber-400" />
-            Reset Sample DB
+            Reset DB
           </button>
         </div>
       </div>

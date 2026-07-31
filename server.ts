@@ -165,6 +165,7 @@ const DATA_DIR = path.join(process.cwd(), "database");
 const CONFIG_JSON_PATH = path.join(process.cwd(), "config", "config.json");
 const CONFIG_YAML_PATH = path.join(process.cwd(), "config", "config.yaml");
 const ROOT_CONFIG_YAML_PATH = path.join(process.cwd(), "config.yaml");
+const PROFILES_JSON_PATH = path.join(process.cwd(), "config", "profiles.json");
 const RESUME_PATH = path.join(process.cwd(), "resume", "resume.md");
 const JOBS_DB_PATH = path.join(DATA_DIR, "jobs.db.json");
 const REPORT_PATH = path.join(process.cwd(), "output", "report.md");
@@ -191,7 +192,102 @@ function writeFileIfChanged(filePath: string, content: string): void {
 }
 
 // Helper functions for storage
-function loadConfig(): AppConfig {
+interface UserProfileData {
+  id: string;
+  name: string;
+  config: AppConfig;
+  resume: ResumeData;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ProfilesStore {
+  activeProfileId: string;
+  profiles: UserProfileData[];
+}
+
+function loadProfilesData(): ProfilesStore {
+  try {
+    if (fs.existsSync(PROFILES_JSON_PATH)) {
+      const store: ProfilesStore = JSON.parse(fs.readFileSync(PROFILES_JSON_PATH, "utf-8"));
+      if (store && Array.isArray(store.profiles) && store.profiles.length > 0) {
+        if (!store.profiles.some((p) => p.id === store.activeProfileId)) {
+          store.activeProfileId = store.profiles[0].id;
+        }
+        return store;
+      }
+    }
+  } catch (err) {
+    console.error("Error reading profiles.json:", err);
+  }
+
+  // Bootstrap initial default profile if profiles.json doesn't exist
+  const initialConfig = loadConfigRaw();
+  const initialResume = loadResumeRaw(initialConfig.skills);
+  const defaultProfile: UserProfileData = {
+    id: "default",
+    name: "Default Candidate Profile",
+    config: initialConfig,
+    resume: initialResume,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  const store: ProfilesStore = {
+    activeProfileId: "default",
+    profiles: [defaultProfile],
+  };
+
+  saveProfilesData(store);
+  return store;
+}
+
+function getActiveProfileId(): string {
+  try {
+    if (fs.existsSync(PROFILES_JSON_PATH)) {
+      const store: ProfilesStore = JSON.parse(fs.readFileSync(PROFILES_JSON_PATH, "utf-8"));
+      if (store && store.activeProfileId) {
+        return store.activeProfileId;
+      }
+    }
+  } catch (err) {
+    // fallback
+  }
+  return "default";
+}
+
+function getProfileJobsPath(profileId?: string): string {
+  const pid = profileId || getActiveProfileId();
+  const dir = path.join(process.cwd(), "database", "profiles", pid);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return path.join(dir, "jobs.db.json");
+}
+
+function getProfileReportPath(profileId?: string): string {
+  const pid = profileId || getActiveProfileId();
+  const dir = path.join(process.cwd(), "output", "profiles", pid);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return path.join(dir, "report.md");
+}
+
+function getProfileReportsDir(profileId?: string): string {
+  const pid = profileId || getActiveProfileId();
+  const dir = path.join(process.cwd(), "output", "profiles", pid, "reports");
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
+function saveProfilesData(store: ProfilesStore): void {
+  writeFileIfChanged(PROFILES_JSON_PATH, JSON.stringify(store, null, 2));
+}
+
+function loadConfigRaw(): AppConfig {
   let loaded: AppConfig = DEFAULT_CONFIG;
   try {
     if (fs.existsSync(CONFIG_JSON_PATH)) {
@@ -204,8 +300,25 @@ function loadConfig(): AppConfig {
   } catch (err) {
     console.error("Error reading config.json:", err);
   }
-  saveConfig(loaded);
   return loaded;
+}
+
+function loadResumeRaw(configSkills?: string[]): ResumeData {
+  try {
+    if (fs.existsSync(RESUME_PATH)) {
+      const markdown = fs.readFileSync(RESUME_PATH, "utf-8");
+      return parseResumeDetails(markdown, configSkills);
+    }
+  } catch (err) {
+    console.error("Error reading resume.md:", err);
+  }
+  return parseResumeDetails("", configSkills);
+}
+
+function loadConfig(): AppConfig {
+  const cfg = loadConfigRaw();
+  saveConfig(cfg);
+  return cfg;
 }
 
 function saveConfig(config: AppConfig): void {
@@ -217,6 +330,22 @@ function saveConfig(config: AppConfig): void {
   const yamlContent = "# Job Radar AI Pipeline Search & Evaluation Configuration\n" + dumpYaml(config);
   writeFileIfChanged(CONFIG_YAML_PATH, yamlContent);
   writeFileIfChanged(ROOT_CONFIG_YAML_PATH, yamlContent);
+
+  // Sync to profiles.json active profile
+  try {
+    if (fs.existsSync(PROFILES_JSON_PATH)) {
+      const store: ProfilesStore = JSON.parse(fs.readFileSync(PROFILES_JSON_PATH, "utf-8"));
+      const active = store.profiles.find((p) => p.id === store.activeProfileId);
+      if (active) {
+        active.config = config;
+        active.resume = parseResumeDetails(active.resume.content, config.skills);
+        active.updatedAt = new Date().toISOString();
+        saveProfilesData(store);
+      }
+    }
+  } catch (err) {
+    console.error("Error syncing saveConfig to profiles.json:", err);
+  }
 }
 
 // Initial bootstrap load to create config files
@@ -254,34 +383,57 @@ function parseResumeDetails(content: string, configSkills?: string[]): ResumeDat
 
 function loadResume(): ResumeData {
   const config = loadConfig();
-  try {
-    if (fs.existsSync(RESUME_PATH)) {
-      const markdown = fs.readFileSync(RESUME_PATH, "utf-8");
-      return parseResumeDetails(markdown, config.skills);
-    }
-  } catch (err) {
-    console.error("Error reading resume.md:", err);
-  }
-  return parseResumeDetails("", config.skills);
+  return loadResumeRaw(config.skills);
 }
 
 function saveResume(content: string): ResumeData {
   writeFileIfChanged(RESUME_PATH, content);
   const config = loadConfig();
-  return parseResumeDetails(content, config.skills);
-}
+  const resume = parseResumeDetails(content, config.skills);
 
-function loadJobsDB(): Job[] {
+  // Sync to profiles.json active profile
   try {
-    if (fs.existsSync(JOBS_DB_PATH)) {
-      return JSON.parse(fs.readFileSync(JOBS_DB_PATH, "utf-8"));
+    if (fs.existsSync(PROFILES_JSON_PATH)) {
+      const store: ProfilesStore = JSON.parse(fs.readFileSync(PROFILES_JSON_PATH, "utf-8"));
+      const active = store.profiles.find((p) => p.id === store.activeProfileId);
+      if (active) {
+        active.resume = resume;
+        active.updatedAt = new Date().toISOString();
+        saveProfilesData(store);
+      }
     }
   } catch (err) {
-    console.error("Error reading jobs database:", err);
+    console.error("Error syncing saveResume to profiles.json:", err);
   }
-  // Initialize with empty array
-  writeFileIfChanged(JOBS_DB_PATH, JSON.stringify([], null, 2));
-  return [];
+
+  return resume;
+}
+
+function loadJobsDB(profileId?: string): Job[] {
+  const pid = profileId || getActiveProfileId();
+  const profilePath = getProfileJobsPath(pid);
+
+  try {
+    if (fs.existsSync(profilePath)) {
+      return JSON.parse(fs.readFileSync(profilePath, "utf-8"));
+    }
+    // Fallback: If default profile and main JOBS_DB_PATH exists, load it
+    if (pid === "default" && fs.existsSync(JOBS_DB_PATH)) {
+      const legacyJobs = JSON.parse(fs.readFileSync(JOBS_DB_PATH, "utf-8"));
+      writeFileIfChanged(profilePath, JSON.stringify(legacyJobs, null, 2));
+      return legacyJobs;
+    }
+  } catch (err) {
+    console.error(`Error reading jobs database for profile ${pid}:`, err);
+  }
+
+  // Fallback to sample jobs for default profile, or empty array
+  const initialJobs = pid === "default" ? SAMPLE_JOBS : [];
+  writeFileIfChanged(profilePath, JSON.stringify(initialJobs, null, 2));
+  if (pid === getActiveProfileId()) {
+    writeFileIfChanged(JOBS_DB_PATH, JSON.stringify(initialJobs, null, 2));
+  }
+  return initialJobs;
 }
 
 function isLocationMatch(jobLoc: string, preferredLocations: string[]): boolean {
@@ -580,11 +732,21 @@ function generateHeuristicEvaluation(job: Job, resume: ResumeData, config?: AppC
   };
 }
 
-function saveJobsDB(jobs: Job[]): void {
-  fs.writeFileSync(JOBS_DB_PATH, JSON.stringify(jobs, null, 2), "utf-8");
+function saveJobsDB(jobs: Job[], profileId?: string): void {
+  const pid = profileId || getActiveProfileId();
+  const profilePath = getProfileJobsPath(pid);
+  const jsonContent = JSON.stringify(jobs, null, 2);
+
+  writeFileIfChanged(profilePath, jsonContent);
+
+  // Sync to root JOBS_DB_PATH if saving for active profile
+  if (pid === getActiveProfileId()) {
+    writeFileIfChanged(JOBS_DB_PATH, jsonContent);
+  }
 }
 
-function generateMarkdownReport(jobs: Job[]): string {
+function generateMarkdownReport(jobs: Job[], profileId?: string): string {
+  const pid = profileId || getActiveProfileId();
   const config = loadConfig();
   const minThreshold = config.minimum_score || 65;
 
@@ -654,14 +816,31 @@ function generateMarkdownReport(jobs: Job[]): string {
   md += renderSection("Good Matches", goodMatches, "👍");
   md += renderSection("Weak Matches", weakMatches, "⚠️");
 
-  fs.writeFileSync(REPORT_PATH, md, "utf-8");
+  // Write to profile report path
+  const profileReportPath = getProfileReportPath(pid);
+  fs.writeFileSync(profileReportPath, md, "utf-8");
 
-  // Save datetime-named report in output/reports/
+  // Sync to root REPORT_PATH if active profile
+  if (pid === getActiveProfileId()) {
+    fs.writeFileSync(REPORT_PATH, md, "utf-8");
+  }
+
+  // Save datetime & profile-named report in output/profiles/<profileId>/reports/
   try {
+    const profileReportsDir = getProfileReportsDir(pid);
+    const store = loadProfilesData();
+    const profileObj = store.profiles.find((p) => p.id === pid);
+    const profileName = profileObj ? profileObj.name : "Report";
+    const cleanProfileName = profileName
+      .replace(/[^a-zA-Z0-9_\-]/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "");
+
     const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, '0');
+    const pad = (n: number) => String(n).padStart(2, "0");
     const dateFormatted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
-    const historyFile = path.join(REPORTS_DIR, `report_${dateFormatted}.md`);
+    const historyFilename = `report_${cleanProfileName || "scan"}_${dateFormatted}.md`;
+    const historyFile = path.join(profileReportsDir, historyFilename);
     fs.writeFileSync(historyFile, md, "utf-8");
   } catch (err) {
     console.error("Error saving historical report file:", err);
@@ -700,6 +879,196 @@ function getGeminiClient() {
 }
 
 // API Routes
+
+// 0. Profile Endpoints
+app.get("/api/profiles", (req, res) => {
+  const store = loadProfilesData();
+  res.json(store);
+});
+
+app.post("/api/profiles/select", (req, res) => {
+  const { profileId } = req.body;
+  const store = loadProfilesData();
+  const target = store.profiles.find((p) => p.id === profileId);
+  if (!target) {
+    return res.status(404).json({ error: "Profile not found" });
+  }
+
+  store.activeProfileId = profileId;
+  saveProfilesData(store);
+
+  // Sync to config files & resume file
+  saveConfig(target.config);
+  saveResume(target.resume.content);
+
+  // Sync profile's jobs database & report
+  const profileJobs = loadJobsDB(profileId);
+  saveJobsDB(profileJobs, profileId);
+  const reportMd = generateMarkdownReport(profileJobs, profileId);
+
+  const updatedStore = loadProfilesData();
+  res.json({
+    success: true,
+    activeProfileId: updatedStore.activeProfileId,
+    profiles: updatedStore.profiles,
+    activeProfile: target,
+    config: target.config,
+    resume: loadResume(),
+    jobs: profileJobs,
+    report: reportMd,
+  });
+});
+
+app.post("/api/profiles", (req, res) => {
+  const { name, copyFromProfileId } = req.body;
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: "Profile name is required" });
+  }
+
+  const store = loadProfilesData();
+  let baseConfig = loadConfig();
+  let baseResumeContent = loadResume().content;
+  let baseJobs: Job[] = [];
+
+  if (copyFromProfileId) {
+    const source = store.profiles.find((p) => p.id === copyFromProfileId);
+    if (source) {
+      baseConfig = JSON.parse(JSON.stringify(source.config));
+      baseResumeContent = source.resume.content;
+      baseJobs = JSON.parse(JSON.stringify(loadJobsDB(copyFromProfileId)));
+    }
+  }
+
+  const newId = `profile-${Date.now()}`;
+  const parsedResume = parseResumeDetails(baseResumeContent, baseConfig.skills);
+  const newProfile: UserProfileData = {
+    id: newId,
+    name: name.trim(),
+    config: baseConfig,
+    resume: parsedResume,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  store.profiles.push(newProfile);
+  store.activeProfileId = newId;
+  saveProfilesData(store);
+
+  // Sync to config, resume, jobs and report files
+  saveConfig(baseConfig);
+  saveResume(baseResumeContent);
+  saveJobsDB(baseJobs, newId);
+  const reportMd = generateMarkdownReport(baseJobs, newId);
+
+  const updatedStore = loadProfilesData();
+  res.json({
+    success: true,
+    activeProfileId: updatedStore.activeProfileId,
+    profiles: updatedStore.profiles,
+    activeProfile: newProfile,
+    config: baseConfig,
+    resume: loadResume(),
+    jobs: baseJobs,
+    report: reportMd,
+  });
+});
+
+app.put("/api/profiles/:id", (req, res) => {
+  const { id } = req.params;
+  const { name, config: newConfig, resumeContent } = req.body;
+
+  const store = loadProfilesData();
+  const index = store.profiles.findIndex((p) => p.id === id);
+  if (index === -1) {
+    return res.status(404).json({ error: "Profile not found" });
+  }
+
+  const existing = store.profiles[index];
+  if (name !== undefined && name.trim()) {
+    existing.name = name.trim();
+  }
+  if (newConfig) {
+    existing.config = newConfig;
+  }
+  if (resumeContent !== undefined) {
+    existing.resume = parseResumeDetails(resumeContent, existing.config.skills);
+  }
+  existing.updatedAt = new Date().toISOString();
+
+  store.profiles[index] = existing;
+  saveProfilesData(store);
+
+  // If this is the active profile, sync to files
+  if (id === store.activeProfileId) {
+    if (newConfig) saveConfig(newConfig);
+    if (resumeContent !== undefined) saveResume(resumeContent);
+  }
+
+  const updatedStore = loadProfilesData();
+  const activePid = updatedStore.activeProfileId;
+  const activeJobs = loadJobsDB(activePid);
+
+  res.json({
+    success: true,
+    activeProfileId: updatedStore.activeProfileId,
+    profiles: updatedStore.profiles,
+    activeProfile: existing,
+    config: loadConfig(),
+    resume: loadResume(),
+    jobs: activeJobs,
+  });
+});
+
+app.delete("/api/profiles/:id", (req, res) => {
+  const { id } = req.params;
+  const store = loadProfilesData();
+
+  if (store.profiles.length <= 1) {
+    return res.status(400).json({ error: "Cannot delete the last remaining profile" });
+  }
+
+  const index = store.profiles.findIndex((p) => p.id === id);
+  if (index === -1) {
+    return res.status(404).json({ error: "Profile not found" });
+  }
+
+  store.profiles.splice(index, 1);
+
+  // Clean up profile database/report directories if exist
+  try {
+    const pJobsDir = path.join(process.cwd(), "database", "profiles", id);
+    if (fs.existsSync(pJobsDir)) fs.rmSync(pJobsDir, { recursive: true, force: true });
+    const pReportDir = path.join(process.cwd(), "output", "profiles", id);
+    if (fs.existsSync(pReportDir)) fs.rmSync(pReportDir, { recursive: true, force: true });
+  } catch (err) {
+    console.error("Error cleaning up profile data directory:", err);
+  }
+
+  if (store.activeProfileId === id) {
+    store.activeProfileId = store.profiles[0].id;
+    const newActive = store.profiles[0];
+    saveConfig(newActive.config);
+    saveResume(newActive.resume.content);
+  }
+
+  saveProfilesData(store);
+
+  const activePid = store.activeProfileId;
+  const activeJobs = loadJobsDB(activePid);
+  saveJobsDB(activeJobs, activePid);
+  const reportMd = generateMarkdownReport(activeJobs, activePid);
+
+  const updatedStore = loadProfilesData();
+  res.json({
+    success: true,
+    activeProfileId: updatedStore.activeProfileId,
+    profiles: updatedStore.profiles,
+    config: loadConfig(),
+    resume: loadResume(),
+    jobs: activeJobs,
+    report: reportMd,
+  });
+});
 
 // 1. Config Endpoints
 app.get("/api/config", (req, res) => {
@@ -1235,8 +1604,52 @@ app.post("/api/pipeline/run", async (req, res) => {
 });
 
 // 6. Report Endpoints
+app.delete("/api/reports", (req, res) => {
+  try {
+    const pid = getActiveProfileId();
+    const profileReportsDir = getProfileReportsDir(pid);
+    const profileReportPath = getProfileReportPath(pid);
+
+    // Delete all report files in profile reports directory
+    if (fs.existsSync(profileReportsDir)) {
+      const files = fs.readdirSync(profileReportsDir);
+      for (const file of files) {
+        if (file.endsWith(".md")) {
+          fs.unlinkSync(path.join(profileReportsDir, file));
+        }
+      }
+    }
+
+    // Delete profile main report.md
+    if (fs.existsSync(profileReportPath)) {
+      fs.unlinkSync(profileReportPath);
+    }
+
+    // Clean root REPORTS_DIR & REPORT_PATH if default profile
+    if (pid === "default") {
+      if (fs.existsSync(REPORTS_DIR)) {
+        const files = fs.readdirSync(REPORTS_DIR);
+        for (const file of files) {
+          if (file.endsWith(".md")) {
+            fs.unlinkSync(path.join(REPORTS_DIR, file));
+          }
+        }
+      }
+      if (fs.existsSync(REPORT_PATH)) {
+        fs.unlinkSync(REPORT_PATH);
+      }
+    }
+
+    res.json({ success: true, message: "All generated reports cleared successfully." });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/reports", (req, res) => {
   try {
+    const pid = getActiveProfileId();
+    const profileReportsDir = getProfileReportsDir(pid);
     const reports: Array<{
       id: string;
       filename: string;
@@ -1245,16 +1658,24 @@ app.get("/api/reports", (req, res) => {
       sizeBytes: number;
     }> = [];
 
-    if (fs.existsSync(REPORTS_DIR)) {
-      const files = fs.readdirSync(REPORTS_DIR).filter((f) => f.endsWith(".md"));
+    // ONLY scan active profile's reports directory to prevent cross-profile report leakage
+    if (fs.existsSync(profileReportsDir)) {
+      const files = fs.readdirSync(profileReportsDir).filter((f) => f.endsWith(".md"));
       for (const file of files) {
-        const fullPath = path.join(REPORTS_DIR, file);
+        const fullPath = path.join(profileReportsDir, file);
         const stats = fs.statSync(fullPath);
 
         let prettyTitle = file;
-        const match = file.match(/report_(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})\.md/);
-        if (match) {
-          prettyTitle = `Scan Report — ${match[1]} ${match[2]}:${match[3]}:${match[4]}`;
+        const matchWithProfile = file.match(/^report_(.+)_(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})\.md$/);
+        const matchStandard = file.match(/^report_(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})\.md$/);
+
+        if (matchWithProfile) {
+          const profTag = matchWithProfile[1].replace(/_/g, " ");
+          const dateStr = matchWithProfile[2];
+          const timeStr = `${matchWithProfile[3]}:${matchWithProfile[4]}:${matchWithProfile[5]}`;
+          prettyTitle = `[${profTag}] Scan Report — ${dateStr} ${timeStr}`;
+        } else if (matchStandard) {
+          prettyTitle = `Scan Report — ${matchStandard[1]} ${matchStandard[2]}:${matchStandard[3]}:${matchStandard[4]}`;
         }
 
         reports.push({
@@ -1269,8 +1690,9 @@ app.get("/api/reports", (req, res) => {
 
     reports.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-    if (reports.length === 0 && fs.existsSync(REPORT_PATH)) {
-      const stats = fs.statSync(REPORT_PATH);
+    const activeProfileReportPath = getProfileReportPath(pid);
+    if (reports.length === 0 && fs.existsSync(activeProfileReportPath)) {
+      const stats = fs.statSync(activeProfileReportPath);
       reports.push({
         id: "latest",
         filename: "report.md",
@@ -1289,18 +1711,29 @@ app.get("/api/reports", (req, res) => {
 app.get("/api/reports/:filename", (req, res) => {
   try {
     const filename = req.params.filename;
-    let filePath = REPORT_PATH;
+    const pid = getActiveProfileId();
+    const profileReportPath = getProfileReportPath(pid);
+    const profileReportsDir = getProfileReportsDir(pid);
+    let filePath = profileReportPath;
 
     if (filename !== "latest" && filename !== "report.md") {
       const safeFilename = path.basename(filename);
-      filePath = path.join(REPORTS_DIR, safeFilename);
-    }
-
-    if (!fs.existsSync(filePath)) {
-      if (fs.existsSync(REPORT_PATH)) {
-        filePath = REPORT_PATH;
+      const pFile = path.join(profileReportsDir, safeFilename);
+      const rootFile = path.join(REPORTS_DIR, safeFilename);
+      if (fs.existsSync(pFile)) {
+        filePath = pFile;
+      } else if (fs.existsSync(rootFile)) {
+        filePath = rootFile;
       } else {
         return res.status(404).json({ error: "Report file not found" });
+      }
+    } else {
+      if (!fs.existsSync(filePath)) {
+        if (fs.existsSync(REPORT_PATH)) {
+          filePath = REPORT_PATH;
+        } else {
+          return res.status(404).json({ error: "Report file not found" });
+        }
       }
     }
 
@@ -1311,7 +1744,7 @@ app.get("/api/reports/:filename", (req, res) => {
       filename: path.basename(filePath),
       content,
       createdAt: stats.mtime.toISOString(),
-      path: `output/reports/${path.basename(filePath)}`,
+      path: `output/profiles/${pid}/reports/${path.basename(filePath)}`,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -1320,14 +1753,19 @@ app.get("/api/reports/:filename", (req, res) => {
 
 app.get("/api/report", (req, res) => {
   try {
+    const pid = getActiveProfileId();
+    const profileReportPath = getProfileReportPath(pid);
     let md = "";
-    if (fs.existsSync(REPORT_PATH)) {
+
+    if (fs.existsSync(profileReportPath)) {
+      md = fs.readFileSync(profileReportPath, "utf-8");
+    } else if (fs.existsSync(REPORT_PATH)) {
       md = fs.readFileSync(REPORT_PATH, "utf-8");
     } else {
-      const jobs = loadJobsDB();
-      md = generateMarkdownReport(jobs);
+      const jobs = loadJobsDB(pid);
+      md = generateMarkdownReport(jobs, pid);
     }
-    res.json({ content: md, path: "output/report.md" });
+    res.json({ content: md, path: `output/profiles/${pid}/report.md` });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

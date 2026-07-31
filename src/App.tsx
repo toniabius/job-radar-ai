@@ -3,20 +3,21 @@ import { Header } from './components/Header';
 import { JobCard } from './components/JobCard';
 import { JobDetailModal } from './components/JobDetailModal';
 import { DatabaseViewer } from './components/DatabaseViewer';
-import { ResumeEditor } from './components/ResumeEditor';
 import { ConfigEditor } from './components/ConfigEditor';
 import { ReportView } from './components/ReportView';
 import { AddJobModal } from './components/AddJobModal';
 import { ScanProgressModal } from './components/ScanProgressModal';
-import { Job, AppConfig, ResumeData, PipelineLog } from './types';
-import { Search, Sparkles, Filter, ArrowUpDown, Building, DollarSign, MapPin, X, Clock } from 'lucide-react';
+import { Job, AppConfig, ResumeData, UserProfile, PipelineLog } from './types';
+import { Search, Sparkles, Filter, ArrowUpDown, Building, DollarSign, MapPin, X, Clock, User } from 'lucide-react';
 import { parseLocationGroup, parseMinSalary } from './utils/location';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'database' | 'resume' | 'config' | 'report'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'database' | 'config' | 'report'>('dashboard');
   
   // App state
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [profiles, setProfiles] = useState<UserProfile[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState<string>('default');
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [resume, setResume] = useState<ResumeData | null>(null);
   const [reportContent, setReportContent] = useState<string>('');
@@ -48,10 +49,27 @@ export default function App() {
   // Load Initial Data from Express API
   useEffect(() => {
     fetchJobs();
-    fetchConfig();
-    fetchResume();
+    fetchProfiles();
     fetchReport();
   }, []);
+
+  const fetchProfiles = async () => {
+    try {
+      const res = await fetch('/api/profiles');
+      if (res.ok) {
+        const data = await res.json();
+        setProfiles(data.profiles || []);
+        setActiveProfileId(data.activeProfileId || 'default');
+        const active = (data.profiles || []).find((p: UserProfile) => p.id === data.activeProfileId) || data.profiles?.[0];
+        if (active) {
+          setConfig(active.config);
+          setResume(active.resume);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching profiles:', err);
+    }
+  };
 
   const fetchJobs = async () => {
     try {
@@ -320,6 +338,95 @@ export default function App() {
     }
   };
 
+  // Select Profile
+  const handleSelectProfile = async (profileId: string) => {
+    try {
+      const res = await fetch('/api/profiles/select', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setActiveProfileId(data.activeProfileId);
+        setProfiles(data.profiles);
+        if (data.config) setConfig(data.config);
+        if (data.resume) setResume(data.resume);
+        if (data.jobs) setJobs(data.jobs);
+        if (data.report) setReportContent(data.report);
+        else fetchReport();
+      }
+    } catch (err) {
+      console.error('Error selecting profile:', err);
+    }
+  };
+
+  // Create Profile
+  const handleCreateProfile = async (name: string, copyFromProfileId?: string) => {
+    try {
+      const res = await fetch('/api/profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, copyFromProfileId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setActiveProfileId(data.activeProfileId);
+        setProfiles(data.profiles);
+        if (data.config) setConfig(data.config);
+        if (data.resume) setResume(data.resume);
+        if (data.jobs) setJobs(data.jobs);
+        if (data.report) setReportContent(data.report);
+        else fetchReport();
+      }
+    } catch (err) {
+      console.error('Error creating profile:', err);
+    }
+  };
+
+  // Delete Profile
+  const handleDeleteProfile = async (profileId: string) => {
+    try {
+      const res = await fetch(`/api/profiles/${profileId}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setActiveProfileId(data.activeProfileId);
+        setProfiles(data.profiles);
+        if (data.config) setConfig(data.config);
+        if (data.resume) setResume(data.resume);
+        if (data.jobs) setJobs(data.jobs);
+        if (data.report) setReportContent(data.report);
+        else fetchReport();
+      }
+    } catch (err) {
+      console.error('Error deleting profile:', err);
+    }
+  };
+
+  // Save Active Profile
+  const handleSaveProfile = async (profileId: string, name: string, newConfig: AppConfig, resumeContent: string) => {
+    try {
+      const res = await fetch(`/api/profiles/${profileId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, config: newConfig, resumeContent }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setActiveProfileId(data.activeProfileId);
+        setProfiles(data.profiles);
+        if (data.config) setConfig(data.config);
+        if (data.resume) setResume(data.resume);
+        if (data.jobs) setJobs(data.jobs);
+        fetchReport();
+      }
+    } catch (err) {
+      console.error('Error saving active profile:', err);
+    }
+  };
+
   // Unique Companies for Filter
   const uniqueCompanies = useMemo(() => {
     return Array.from(new Set(jobs.map((j) => j.company))).sort();
@@ -408,6 +515,10 @@ export default function App() {
   const strongMatchesCount = jobs.filter((j) => (j.score || 0) >= minScoreThreshold).length;
   const hasActiveFilters = searchQuery !== '' || companyFilter !== 'ALL' || salaryFilter !== 'ALL' || locationFilter !== 'ALL' || scoreFilter !== 'ALL';
 
+  const activeProfileName = useMemo(() => {
+    return profiles.find((p) => p.id === activeProfileId)?.name || 'Default Profile';
+  }, [profiles, activeProfileId]);
+
   const resetAllFilters = () => {
     setSearchQuery('');
     setCompanyFilter('ALL');
@@ -427,6 +538,7 @@ export default function App() {
         totalJobs={jobs.length}
         strongMatchesCount={strongMatchesCount}
         minimumScoreThreshold={minScoreThreshold}
+        activeProfileName={activeProfileName}
       />
 
       {/* Main Container */}
@@ -435,12 +547,16 @@ export default function App() {
         {activeTab === 'dashboard' && (
           <div>
             {/* Top Last Scan Text Line */}
-            <div className="flex items-center justify-between text-xs text-slate-500 mb-4 px-1">
-              <div className="flex items-center space-x-2 font-medium">
+            <div className="flex flex-wrap items-center justify-between text-xs text-slate-500 mb-4 px-1 gap-2">
+              <div className="flex items-center space-x-2 font-medium flex-wrap">
                 <Clock className="w-3.5 h-3.5 text-slate-400" />
                 <span>Last Scan: <strong className="text-slate-800 font-semibold">{lastRunTime ? lastRunTime : 'Not run yet (click "Scan" to execute scan)'}</strong></span>
                 <span className="text-slate-300">•</span>
                 <span>Scanned <strong className="text-slate-800 font-semibold">{lastScanResult?.totalJobs !== undefined ? lastScanResult.totalJobs : jobs.length}</strong> Listings</span>
+              </div>
+              <div className="flex items-center space-x-1.5 bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full text-xs font-semibold border border-indigo-200">
+                <User className="w-3.5 h-3.5 text-indigo-500" />
+                <span>Active Profile: {activeProfileName}</span>
               </div>
             </div>
 
@@ -650,6 +766,8 @@ export default function App() {
         {activeTab === 'report' && (
           <ReportView
             reportContent={reportContent}
+            reportPath={`output/profiles/${activeProfileId}/report.md`}
+            activeProfileName={activeProfileName}
             onRefreshReport={fetchReport}
           />
         )}
@@ -658,6 +776,7 @@ export default function App() {
         {activeTab === 'database' && (
           <DatabaseViewer
             jobs={jobs}
+            activeProfileName={activeProfileName}
             onResetDatabase={handleResetDatabase}
             onDeleteJob={handleDeleteJob}
             onToggleApplied={handleToggleApplied}
@@ -668,22 +787,20 @@ export default function App() {
           />
         )}
 
-        {/* RESUME VIEW */}
-        {resume && (
-          <div className={activeTab === 'resume' ? 'block' : 'hidden'}>
-            <ResumeEditor
-              resume={resume}
-              onSave={handleSaveResume}
-            />
-          </div>
-        )}
-
-        {/* PIPELINE SEARCH CONFIG VIEW */}
-        {config && (
+        {/* CANDIDATE PROFILE & PIPELINE SEARCH CONFIG VIEW */}
+        {config && resume && (
           <div className={activeTab === 'config' ? 'block' : 'hidden'}>
             <ConfigEditor
               config={config}
-              onSave={handleSaveConfig}
+              resume={resume}
+              activeProfileId={activeProfileId}
+              profiles={profiles}
+              onSaveConfig={handleSaveConfig}
+              onSaveResume={handleSaveResume}
+              onSelectProfile={handleSelectProfile}
+              onCreateProfile={handleCreateProfile}
+              onDeleteProfile={handleDeleteProfile}
+              onSaveProfile={handleSaveProfile}
             />
           </div>
         )}

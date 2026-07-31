@@ -106,10 +106,11 @@ To keep reports concise and actionable:
 ## 📁 Data Persistence & Version Control Strategy
 
 Job Radar AI uses lightweight file-system backed JSON & Markdown stores for zero-overhead local data storage:
+- `/config/profiles.json`: Multi-candidate profiles database storing active profile ID, candidate profile names, custom target roles, search configurations, and candidate resumes.
 - `/database/jobs.db.json`: Scanned and evaluated job database with status tags (`evaluated`, `saved`, `applied`).
-- `/config/config.json`: Active pipeline parameters (roles, optional companies, lookback window, salary bounds, minimum score threshold, locations).
+- `/config/config.json`: Active pipeline parameters (roles, optional companies, lookback window, salary bounds, minimum score threshold, locations). Automatically synced to the active candidate profile.
 - `/output/report.md`: Markdown evaluation report output.
-- `/resume/resume.md`: Candidate resume in Markdown format.
+- `/resume/resume.md`: Candidate resume in Markdown format. Automatically synced to the active candidate profile.
 
 ### `.gitkeep` Reservation Pattern
 To prevent committing personal credentials, local candidate data, or generated reports into Git repositories, directories are reserved with empty `.gitkeep` files while ignoring actual data contents via `.gitignore`:
