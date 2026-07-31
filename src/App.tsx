@@ -406,12 +406,12 @@ export default function App() {
   };
 
   // Save Active Profile
-  const handleSaveProfile = async (profileId: string, name: string, newConfig: AppConfig, resumeContent: string) => {
+  const handleSaveProfile = async (profileId: string, name: string, newConfig: AppConfig, resumeContent: string, parsedSkills?: string[]) => {
     try {
       const res = await fetch(`/api/profiles/${profileId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, config: newConfig, resumeContent }),
+        body: JSON.stringify({ name, config: newConfig, resumeContent, parsedSkills }),
       });
       if (res.ok) {
         const data = await res.json();

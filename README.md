@@ -9,6 +9,7 @@ Job Radar AI systematically scans job boards and ATS platforms for target engine
 ## 🌟 Key Features
 
 - **Candidate Profiles & Profile-Scoped Isolation**: Easily save, switch, and manage multiple candidate profiles (e.g. for yourself, colleagues, or friends). Switching profiles automatically isolates and switches the candidate's target config, resume, full job inventory (`database/profiles/<profileId>/jobs.db.json`), and scan history reports (`output/profiles/<profileId>/report.md`).
+- **Interactive Candidate Skill Management**: Easily add custom skills via text input, click quick preset buttons (Python, TypeScript, React, Kubernetes, Docker, AWS, GraphQL, System Design, Go, etc.), remove skills, or trigger AI skill re-extraction. Detected skills directly act as scoring factors in both Gemini AI & ATS Heuristic match evaluation.
 - **Unified Config & Profiles Tab**: Merged the Resume and Config tabs into a streamlined **Config & Profiles** view with quick profile switching, candidate profile selection, duplicate, create, and delete controls.
 - **Instant Scan Cancellation**: Click the **Cancel Scan** button at any point during live scanning or AI evaluation to immediately stop the pipeline and abort backend tasks without storing unverified/partial results to your dashboard.
 - **Minimum Score Threshold for Listing Links**: Configure a match score threshold (e.g. `65%`). Scanned reports only include direct job posting links (`🔗 View Job Posting`) for listings meeting or exceeding this match threshold, keeping reports clean and focused on high-fit roles.
@@ -124,7 +125,7 @@ resume/*
 
 ## 💡 How To Use
 
-1. **Upload / View Resume**: Verify or edit your candidate resume in the **Candidate Resume** tab or upload a PDF resume for AI parsing.
+1. **Upload / View Resume & Manage Candidate Skills**: Verify or edit your candidate resume in the **Candidate Resume** section, upload a PDF resume for AI parsing, or manage **Detected Skills** using custom inputs, quick presets, and skill deletion. (These skills directly factor into AI and ATS match scoring).
 2. **Configure Pipeline Settings**:
    - Add your target **Roles** (e.g., *Full Stack Engineer*, *AI Platform Engineer*).
    - Add **Target Companies** (or leave empty to scan broadly across open web ATS adapters).

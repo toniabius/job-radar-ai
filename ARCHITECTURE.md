@@ -55,7 +55,7 @@ Job Radar AI uses a **Full-Stack Monolithic Architecture** combining a **React 1
 - **State Management**: React State (`useState`, `useEffect`, `useRef`, `useCallback`) synchronized with Express REST endpoints.
 - **Key Modules**:
   - `App.tsx`: Main dashboard controller, cancellation handler via `AbortController` and `/api/pipeline/cancel` API endpoint, job list filtering (All Qualified, Strong Match, Good Match, Status filters), and search indexing.
-  - `ConfigEditor.tsx`: Configurator for Target Roles (prioritized at top), Minimum Score Threshold (`minimum_score`), Target Companies (optional open web mode), Salary Ranges, Lookback Window (Hours, Days, Weeks, Months), and Preferred Locations.
+  - `ConfigEditor.tsx`: Multi-profile manager and configurator for Target Roles, Minimum Score Threshold (`minimum_score`), Target Companies (optional open web mode), Salary Ranges, Lookback Window, Preferred Locations, Markdown Resume Editor, PDF resume parser, and interactive **Detected Skills Manager** (manual skill addition, preset buttons, skill deletion, and AI skill re-extraction).
   - `ScanProgressModal.tsx`: Terminal-styled console displaying real-time execution steps with a prominent **Cancel Scan** control.
   - `ReportView.tsx`: Rendered Markdown viewer with styled external listing links (`target="_blank" rel="noopener noreferrer"`).
   - `DatabaseViewer.tsx`: Dedicated database manager providing full database inspection, provider filtering, single-job **AI Evaluate**, and **Evaluate All Pending** batch processing.
@@ -66,9 +66,9 @@ Job Radar AI uses a **Full-Stack Monolithic Architecture** combining a **React 1
 ## 🤖 Hybrid Match Evaluation Engine (Gemini AI + ATS Heuristic Fallback)
 
 To ensure zero downtime and robust candidate evaluation under all key configurations:
-1. **Primary Evaluation Mode**: Uses `@google/genai` with `gemini-2.5-flash` or `gemini-2.5-flash-lite` to perform structured prompt evaluation comparing job requirements against `resume.md`.
+1. **Primary Evaluation Mode**: Uses `@google/genai` with `gemini-2.5-flash` or `gemini-2.5-flash-lite` to perform structured prompt evaluation comparing job requirements against `resume.md` and candidate detected skills (`parsedSkills`).
 2. **Resilient Fallback Mode**: If `GEMINI_API_KEY` is not configured or returns an authentication error (e.g., `API_KEY_INVALID`), the backend automatically flags `isApiKeyKnownInvalid` and redirects evaluation to a deterministic **ATS Heuristic Scoring Engine**.
-3. **ATS Heuristic Algorithm**: Calculates term overlap between candidate resume skills/experience and job title/description, generating deterministic fit scores (0-100%), matching reason lists, missing skill identification, and actionable cover letter guidance.
+3. **ATS Heuristic Algorithm**: Calculates term overlap between candidate resume skills/experience (including user-customized `parsedSkills`) and job title/description, generating deterministic fit scores (0-100%), matching reason lists, missing skill identification, and actionable cover letter guidance.
 
 ---
 

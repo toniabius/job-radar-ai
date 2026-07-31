@@ -17,7 +17,7 @@ interface ConfigEditorProps {
   onSelectProfile: (profileId: string) => void;
   onCreateProfile: (name: string, copyFromProfileId?: string) => Promise<void>;
   onDeleteProfile: (profileId: string) => Promise<void>;
-  onSaveProfile: (profileId: string, name: string, config: AppConfig, resumeContent: string) => Promise<void>;
+  onSaveProfile: (profileId: string, name: string, config: AppConfig, resumeContent: string, parsedSkills?: string[]) => Promise<void>;
   isSaving?: boolean;
 }
 
@@ -57,7 +57,26 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
   const [pdfUploadMessage, setPdfUploadMessage] = useState<string | null>(null);
   const [isExtractingSkills, setIsExtractingSkills] = useState(false);
   const [localParsedSkills, setLocalParsedSkills] = useState<string[]>(initialResume.parsedSkills || []);
+  const [newSkillInput, setNewSkillInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleAddSkill = (skillToAdd?: string) => {
+    const skill = (skillToAdd || newSkillInput).trim();
+    if (!skill) return;
+    const exists = localParsedSkills.some((s) => s.toLowerCase() === skill.toLowerCase());
+    if (!exists) {
+      const updated = [...localParsedSkills, skill];
+      setLocalParsedSkills(updated);
+      onSaveProfile(activeProfileId, profileName, config, resumeContent, updated);
+    }
+    if (!skillToAdd) setNewSkillInput('');
+  };
+
+  const handleRemoveSkill = (skillToRemove: string) => {
+    const updated = localParsedSkills.filter((s) => s.toLowerCase() !== skillToRemove.toLowerCase());
+    setLocalParsedSkills(updated);
+    onSaveProfile(activeProfileId, profileName, config, resumeContent, updated);
+  };
 
   // New Profile Modal State
   const [showNewProfileModal, setShowNewProfileModal] = useState(false);
@@ -111,7 +130,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
   const handleSaveAll = async () => {
     setIsProcessingProfile(true);
     try {
-      await onSaveProfile(activeProfileId, profileName, config, resumeContent);
+      await onSaveProfile(activeProfileId, profileName, config, resumeContent, localParsedSkills);
       setSavedSuccess(true);
       setTimeout(() => setSavedSuccess(false), 2500);
     } catch (err) {
@@ -1099,7 +1118,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
           </div>
 
           {/* Detected Skills */}
-          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center space-x-2">
                 <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -1114,35 +1133,116 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                 type="button"
                 onClick={handleReExtractSkills}
                 disabled={isExtractingSkills || !resumeContent.trim()}
-                className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 title="Re-extract skills from current resume text using Gemini AI"
               >
                 {isExtractingSkills ? (
                   <>
-                    <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                    <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin text-emerald-400" />
                     Extracting...
                   </>
                 ) : (
                   <>
-                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-                    Re-evaluate with AI
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5 text-emerald-400" />
+                    Re-extract with AI
                   </>
                 )}
               </button>
             </div>
-            <div className="flex flex-wrap gap-1.5 items-center">
+
+            {/* Input form to add a custom skill */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleAddSkill();
+              }}
+              className="flex items-center space-x-2"
+            >
+              <div className="relative flex-1">
+                <Zap className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-emerald-600" />
+                <input
+                  type="text"
+                  placeholder="Add candidate skill (e.g. GraphQL, Kubernetes, System Design, Go, Next.js)"
+                  value={newSkillInput}
+                  onChange={(e) => setNewSkillInput(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-emerald-500 font-medium"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={!newSkillInput.trim()}
+                className="inline-flex items-center px-3.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white shadow-xs transition-colors shrink-0 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5 mr-1" />
+                Add Skill
+              </button>
+            </form>
+
+            {/* Skill Presets */}
+            <div className="flex flex-wrap gap-1 items-center">
+              <span className="text-[10px] font-semibold text-slate-500 mr-1">Quick Presets:</span>
+              {[
+                'Python',
+                'TypeScript',
+                'React',
+                'Node.js',
+                'Kubernetes',
+                'Docker',
+                'AWS',
+                'GraphQL',
+                'System Design',
+                'Go',
+                'PostgreSQL',
+                'Machine Learning'
+              ].map((preset) => {
+                const isAdded = localParsedSkills.some((s) => s.toLowerCase() === preset.toLowerCase());
+                return (
+                  <button
+                    key={preset}
+                    type="button"
+                    disabled={isAdded}
+                    onClick={() => handleAddSkill(preset)}
+                    className={`text-[10px] px-2 py-0.5 rounded border font-medium transition-colors ${
+                      isAdded
+                        ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-default opacity-60'
+                        : 'bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50 cursor-pointer'
+                    }`}
+                  >
+                    + {preset}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Skills Tag Cloud */}
+            <div className="flex flex-wrap gap-1.5 items-center pt-1 border-t border-slate-200/80">
               {localParsedSkills.length > 0 ? (
                 localParsedSkills.map((skill, idx) => (
-                  <span key={idx} className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  <span
+                    key={idx}
+                    className="inline-flex items-center px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200/80 shadow-2xs group"
+                  >
                     {skill}
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveSkill(skill)}
+                      className="ml-1.5 text-emerald-700 hover:text-rose-600 hover:bg-emerald-200/60 rounded p-0.5 transition-colors"
+                      title={`Remove ${skill}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
                   </span>
                 ))
               ) : (
                 <span className="text-[11px] text-slate-500 italic">
-                  No skills detected yet. Paste resume markdown or upload a PDF above.
+                  No skills detected yet. Type a skill above to add one, or use the quick presets.
                 </span>
               )}
             </div>
+
+            <p className="text-[10px] text-slate-500 pt-0.5">
+              💡 <strong>Scoring Factor:</strong> These skills are evaluated directly by both the Gemini AI Matcher & ATS Heuristic engine when scoring candidate fit for <strong>"{profileName}"</strong>.
+            </p>
           </div>
 
           {/* Textarea or Markdown Preview */}

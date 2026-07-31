@@ -337,7 +337,13 @@ function saveConfig(config: AppConfig): void {
       const active = store.profiles.find((p) => p.id === store.activeProfileId);
       if (active) {
         active.config = config;
-        active.resume = parseResumeDetails(active.resume.content, config.skills);
+        const currentSkills = active.resume?.parsedSkills || [];
+        const newParsed = parseResumeDetails(active.resume.content, config.skills);
+        // Preserve user-added or active skills
+        if (currentSkills.length > 0) {
+          newParsed.parsedSkills = Array.from(new Set([...currentSkills, ...newParsed.parsedSkills]));
+        }
+        active.resume = newParsed;
         active.updatedAt = new Date().toISOString();
         saveProfilesData(store);
       }
@@ -449,6 +455,17 @@ async function parseResumeDetailsEnriched(content: string, configSkills?: string
 }
 
 function loadResume(): ResumeData {
+  try {
+    if (fs.existsSync(PROFILES_JSON_PATH)) {
+      const store: ProfilesStore = JSON.parse(fs.readFileSync(PROFILES_JSON_PATH, "utf-8"));
+      const active = store.profiles.find((p) => p.id === store.activeProfileId);
+      if (active && active.resume) {
+        return active.resume;
+      }
+    }
+  } catch (err) {
+    // fallback
+  }
   const config = loadConfig();
   return loadResumeRaw(config.skills);
 }
@@ -1172,7 +1189,7 @@ app.post("/api/profiles", (req, res) => {
 
 app.put("/api/profiles/:id", async (req, res) => {
   const { id } = req.params;
-  const { name, config: newConfig, resumeContent } = req.body;
+  const { name, config: newConfig, resumeContent, parsedSkills } = req.body;
 
   const store = loadProfilesData();
   const index = store.profiles.findIndex((p) => p.id === id);
@@ -1190,6 +1207,9 @@ app.put("/api/profiles/:id", async (req, res) => {
   if (resumeContent !== undefined) {
     existing.resume = await parseResumeDetailsEnriched(resumeContent, existing.config.skills);
   }
+  if (Array.isArray(parsedSkills)) {
+    existing.resume.parsedSkills = parsedSkills;
+  }
   existing.updatedAt = new Date().toISOString();
 
   store.profiles[index] = existing;
@@ -1199,6 +1219,14 @@ app.put("/api/profiles/:id", async (req, res) => {
   if (id === store.activeProfileId) {
     if (newConfig) saveConfig(newConfig);
     if (resumeContent !== undefined) await saveResume(resumeContent);
+    if (Array.isArray(parsedSkills)) {
+      const reStore = loadProfilesData();
+      const activeP = reStore.profiles.find((p) => p.id === id);
+      if (activeP) {
+        activeP.resume.parsedSkills = parsedSkills;
+        saveProfilesData(reStore);
+      }
+    }
   }
 
   const updatedStore = loadProfilesData();
