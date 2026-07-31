@@ -8,6 +8,7 @@ interface ScanProgressModalProps {
   onCancel?: () => void;
   isRunning: boolean;
   logs: PipelineLog[];
+  geminiModel?: string;
   scanResult?: {
     newJobsCount?: number;
     evaluatedCount?: number;
@@ -22,6 +23,7 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
   onCancel,
   isRunning,
   logs,
+  geminiModel,
   scanResult,
 }) => {
   const [progressPercent, setProgressPercent] = useState<number>(0);
@@ -51,7 +53,7 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
 
       const timer3 = setTimeout(() => {
         setProgressPercent(85);
-        setCurrentStageText('Evaluating job matches with Gemini 3.6 Flash engine...');
+        setCurrentStageText(`Evaluating job matches with ${geminiModel || 'Gemini AI'} engine...`);
       }, 2800);
 
       return () => {

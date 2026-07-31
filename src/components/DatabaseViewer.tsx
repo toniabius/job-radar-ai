@@ -54,12 +54,7 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h2 className="font-bold text-base text-white">Full Job Inventory (`database/jobs.db`)</h2>
-              {activeProfileName && (
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
-                  Profile: {activeProfileName}
-                </span>
-              )}
+              <h2 className="font-bold text-base text-white">Full Job Inventory</h2>
             </div>
             <p className="text-xs text-slate-400">Stores tracked job postings, discovery timestamps, and Gemini AI score evaluations</p>
           </div>

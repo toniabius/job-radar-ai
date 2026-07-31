@@ -325,11 +325,10 @@ function saveConfig(config: AppConfig): void {
   // Save to config.json
   const jsonContent = JSON.stringify(config, null, 2);
   writeFileIfChanged(CONFIG_JSON_PATH, jsonContent);
-  
-  // Save to config/config.yaml and root config.yaml
+
+  // Save to config/config.yaml (single source of truth — no root-level duplicate)
   const yamlContent = "# Job Radar AI Pipeline Search & Evaluation Configuration\n" + dumpYaml(config);
   writeFileIfChanged(CONFIG_YAML_PATH, yamlContent);
-  writeFileIfChanged(ROOT_CONFIG_YAML_PATH, yamlContent);
 
   // Sync to profiles.json active profile
   try {
@@ -351,12 +350,61 @@ function saveConfig(config: AppConfig): void {
 // Initial bootstrap load to create config files
 loadConfig();
 
-function parseResumeDetails(content: string, configSkills?: string[]): ResumeData {
-  const expInfo = extractExperienceInfo(content);
-  let experienceYears = expInfo.experienceYears;
+/**
+ * Uses Gemini to extract a deduplicated list of technical skills from resume text.
+ * Falls back to regex matching if the API key is unavailable or the call fails.
+ */
+async function extractSkillsWithGemini(content: string, configSkills?: string[]): Promise<string[]> {
+  if (!content.trim()) {
+    console.log("[RESUME] extractSkillsWithGemini: empty content, using regex");
+    return extractSkillsRegex(content, configSkills);
+  }
+  if (!hasValidApiKey()) {
+    console.log("[RESUME] extractSkillsWithGemini: no valid API key, using regex");
+    return extractSkillsRegex(content, configSkills);
+  }
 
-  // Use config skills as the primary vocabulary; fall back to a broad baseline so
-  // the function still works when called before config is available.
+  try {
+    const ai = getGeminiClient();
+    const config = loadConfig();
+    const model = config.gemini_model || "gemini-3.1-flash-lite";
+
+    const prompt = `You are a technical resume parser. Extract every distinct technical skill, programming language, framework, library, tool, platform, and methodology mentioned in the resume below.
+
+Rules:
+- Return ONLY a JSON array of strings, e.g. ["TypeScript", "React", "AWS"]
+- Each entry must be a specific skill name, properly capitalised (e.g. "TypeScript" not "typescript")
+- Do NOT include soft skills, job titles, company names, or vague terms like "problem solving"
+- De-duplicate — each skill appears once
+- Do NOT include any explanation or markdown formatting, just the raw JSON array
+
+Resume:
+${content.slice(0, 12000)}`;
+
+    const response = await ai.models.generateContent({
+      model,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+    });
+
+    const raw = (response.text || "").trim()
+      .replace(/^```json\n?/i, "").replace(/^```\n?/, "").replace(/```$/, "").trim();
+
+    console.log(`[RESUME] Gemini raw response (first 300 chars): ${raw.slice(0, 300)}`);
+
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      console.log(`[RESUME] Gemini extracted ${parsed.length} skills from resume.`);
+      return parsed.map((s: any) => String(s).trim()).filter(Boolean);
+    }
+  } catch (err: any) {
+    console.warn("[RESUME] Gemini skill extraction failed, falling back to regex:", err.message, err.stack?.split('\n')[1]);
+  }
+
+  return extractSkillsRegex(content, configSkills);
+}
+
+/** Original regex-based skill detection — used as fallback. */
+function extractSkillsRegex(content: string, configSkills?: string[]): string[] {
   const baselineSkills = [
     "TypeScript", "JavaScript", "React", "Node.js", "Python", "Java", "C++", "Go", "Rust",
     "SQL", "PostgreSQL", "MongoDB", "Redis", "AWS", "GCP", "Azure", "Docker", "Kubernetes",
@@ -368,9 +416,18 @@ function parseResumeDetails(content: string, configSkills?: string[]): ResumeDat
     ? [...new Set([...configSkills, ...baselineSkills])]
     : baselineSkills;
 
-  const parsedSkills = skillVocabulary.filter((s) =>
+  return skillVocabulary.filter((s) =>
     new RegExp(`\\b${s.replace(/[+.]/g, (c) => `\\${c}`)}\\b`, "i").test(content)
   );
+}
+
+function parseResumeDetails(content: string, configSkills?: string[]): ResumeData {
+  const expInfo = extractExperienceInfo(content);
+  let experienceYears = expInfo.experienceYears;
+
+  // Synchronous regex-based skill detection (used for initial parse and fallback).
+  // Call enrichResumeSkills() afterwards to upgrade with Gemini extraction.
+  const parsedSkills = extractSkillsRegex(content, configSkills);
 
   return {
     title: "Resume",
@@ -381,15 +438,25 @@ function parseResumeDetails(content: string, configSkills?: string[]): ResumeDat
   };
 }
 
+/**
+ * Async version: parses resume then enriches parsedSkills via Gemini.
+ * Use this on write paths (resume save / upload).
+ */
+async function parseResumeDetailsEnriched(content: string, configSkills?: string[]): Promise<ResumeData> {
+  const base = parseResumeDetails(content, configSkills);
+  base.parsedSkills = await extractSkillsWithGemini(content, configSkills);
+  return base;
+}
+
 function loadResume(): ResumeData {
   const config = loadConfig();
   return loadResumeRaw(config.skills);
 }
 
-function saveResume(content: string): ResumeData {
+async function saveResume(content: string): Promise<ResumeData> {
   writeFileIfChanged(RESUME_PATH, content);
   const config = loadConfig();
-  const resume = parseResumeDetails(content, config.skills);
+  const resume = await parseResumeDetailsEnriched(content, config.skills);
 
   // Sync to profiles.json active profile
   try {
@@ -449,10 +516,14 @@ function isLocationMatch(jobLoc: string, preferredLocations: string[]): boolean 
   if (isJobRemote && prefLowerList.some((p) => p.includes("remote") || p.includes("anywhere"))) return true;
   if (isJobHybrid && prefLowerList.some((p) => p.includes("hybrid") || p.includes("remote"))) return true;
 
-  // Generic United States / US / USA
-  if ((locLower === "united states" || locLower === "us" || locLower === "usa") && 
-      prefLowerList.some((p) => p.includes("united states") || p.includes("us") || p.includes("remote") || p.includes("hybrid") || p.includes("california") || p.includes("washington"))) {
-    return true;
+  // Generic "United States" / "US" / "USA" — only pass through if the candidate
+  // explicitly includes "United States" or "US" as a preferred location, or if
+  // Remote/Hybrid is preferred (those are genuinely nationwide).
+  if (locLower === "united states" || locLower === "us" || locLower === "usa") {
+    return prefLowerList.some((p) =>
+      p.includes("united states") || p === "us" || p === "usa" ||
+      p.includes("remote") || p.includes("hybrid") || p.includes("anywhere")
+    );
   }
 
   const locationAliases: Record<string, string[]> = {
@@ -471,7 +542,34 @@ function isLocationMatch(jobLoc: string, preferredLocations: string[]): boolean 
     "north carolina": ["nc", "north carolina", "raleigh", "charlotte", "durham"],
   };
 
+  // State abbreviations used to detect which state a job location actually belongs to.
+  // Used to reject city matches that belong to a different state (e.g. "Santa Clara, TX").
+  const stateAbbreviations: Record<string, string> = {
+    al: "alabama", ak: "alaska", az: "arizona", ar: "arkansas", ca: "california",
+    co: "colorado", ct: "connecticut", de: "delaware", fl: "florida", ga: "georgia",
+    hi: "hawaii", id: "idaho", il: "illinois", in: "indiana", ia: "iowa",
+    ks: "kansas", ky: "kentucky", la: "louisiana", me: "maine", md: "maryland",
+    ma: "massachusetts", mi: "michigan", mn: "minnesota", ms: "mississippi", mo: "missouri",
+    mt: "montana", ne: "nebraska", nv: "nevada", nh: "new hampshire", nj: "new jersey",
+    nm: "new mexico", ny: "new york", nc: "north carolina", nd: "north dakota", oh: "ohio",
+    ok: "oklahoma", or: "oregon", pa: "pennsylvania", ri: "rhode island", sc: "south carolina",
+    sd: "south dakota", tn: "tennessee", tx: "texas", ut: "utah", vt: "vermont",
+    va: "virginia", wa: "washington", wv: "west virginia", wi: "wisconsin", wy: "wyoming",
+    dc: "washington dc",
+  };
+
   const locTokens = locLower.split(/[\s,./\-\(\)]+/).filter(Boolean);
+
+  // Detect the actual state of the job location from its tokens (abbreviation or full name).
+  const detectedJobState: string | null = (() => {
+    for (const token of locTokens) {
+      if (stateAbbreviations[token]) return stateAbbreviations[token];
+    }
+    for (const [key] of Object.entries(locationAliases)) {
+      if (locTokens.includes(key) || locLower.includes(key)) return key;
+    }
+    return null;
+  })();
 
   for (const pref of prefLowerList) {
     if (locLower.includes(pref)) return true;
@@ -479,6 +577,10 @@ function isLocationMatch(jobLoc: string, preferredLocations: string[]): boolean 
     for (const [key, aliases] of Object.entries(locationAliases)) {
       const isPrefMatchingKey = pref === key || aliases.includes(pref);
       if (isPrefMatchingKey) {
+        // If we can detect the job's actual state and it contradicts this alias group, skip.
+        // e.g. "Santa Clara, TX" — "santa clara" is a CA alias, but detectedJobState is "texas" → reject.
+        if (detectedJobState && detectedJobState !== key) continue;
+
         if (locLower.includes(key) || aliases.some((a) => locTokens.includes(a) || locLower.includes(a))) {
           return true;
         }
@@ -571,16 +673,76 @@ async function fetchLiveLinkedInJobs(
 
             // Avoid duplicate job URLs
             if (!results.some(r => r.url === viewUrl)) {
+              // Fetch the full job description from the individual posting page
+              let fullDescription = "";
+              try {
+                const jobPageRes = await fetch(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${jobId}`, {
+                  headers: {
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-US,en;q=0.9"
+                  }
+                });
+                if (jobPageRes.ok) {
+                  const jobPageHtml = await jobPageRes.text();
+                  const descMatch = jobPageHtml.match(/<div[^>]+class="[^"]*show-more-less-html__markup[^"]*"[^>]*>([\s\S]*?)<\/div>/i)
+                    || jobPageHtml.match(/<div[^>]+id="job-details"[^>]*>([\s\S]*?)<\/div>/i)
+                    || jobPageHtml.match(/<section[^>]+class="[^"]*description[^"]*"[^>]*>([\s\S]*?)<\/section>/i);
+                  if (descMatch) {
+                    fullDescription = descMatch[1]
+                      .replace(/<br\s*\/?>/gi, "\n")
+                      .replace(/<li[^>]*>/gi, "\n• ")
+                      .replace(/<[^>]+>/g, "")
+                      .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+                      .replace(/&nbsp;/g, " ").replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+                      .replace(/\n{3,}/g, "\n\n")
+                      .trim();
+                    console.log(`[JD FETCH] ✓ Got description for job ${jobId} (${fullDescription.length} chars)`);
+                  } else {
+                    console.log(`[JD FETCH] ✗ No description match in HTML for job ${jobId} (HTTP ${jobPageRes.status}, body ${jobPageHtml.length} chars)`);
+                  }
+                  // Also try to extract salary if present
+                  // Pattern order: most specific first
+                  // 1. "range for this role is $X - $Y" (Netflix-style)
+                  // 2. "compensation ... $X - $Y" (general comp context)
+                  // 3. "$X - $Y per year/annual" (explicit annual marker)
+                  // 4. Lone dollar amount with per-year marker
+                  const salaryMatch =
+                    jobPageHtml.match(/range\s+for\s+this\s+role\s+is\s+([\$€£][\d,.]+\s*[-–]\s*[\$€£]?[\d,.]+(?:\s*(?:USD|EUR|GBP))?)/i)
+                    || jobPageHtml.match(/salary\s+range[^<]{0,60}?([\$€£][\d,.]+\s*[-–]\s*[\$€£]?[\d,.]+(?:\s*(?:USD|EUR|GBP))?)/i)
+                    || jobPageHtml.match(/compensation[^<]{0,120}?([\$€£][\d,.]+(?:\s*[-–]\s*[\$€£]?[\d,.]+)?(?:\s*[KkMm])?(?:\s*(?:USD|EUR|GBP))?)/i)
+                    || jobPageHtml.match(/([\$€£][\d,.]+(?:\s*[-–]\s*[\$€£]?[\d,.]+)?\s*(?:USD|EUR|GBP)?)\s*(?:per\s+year|\/yr|annual)/i);
+                  if (salaryMatch) {
+                    results.push({
+                      company: rawComp,
+                      title: jobTitle,
+                      location: jobLoc,
+                      url: viewUrl,
+                      description: fullDescription || `${rawComp} is hiring for a ${jobTitle} role in ${jobLoc}.`,
+                      posted_time: postedTime,
+                      employment_type: "Full-time",
+                      department: "Engineering",
+                      salary: normalizeSalary(salaryMatch[1].trim()),
+                      provider: "LinkedIn",
+                      first_seen: new Date().toISOString(),
+                      status: "new"
+                    });
+                    continue;
+                  }
+                }
+              } catch (fetchErr) {
+                console.error(`[JD FETCH] ✗ Exception fetching job description for ${jobId}:`, fetchErr);
+              }
+
               results.push({
                 company: rawComp,
                 title: jobTitle,
                 location: jobLoc,
                 url: viewUrl,
-                description: `${rawComp} is hiring for a ${jobTitle} role in ${jobLoc}. Direct posting listed on LinkedIn with job ID ${jobId}. Key requirements include software engineering, system architecture, and modern application development.`,
+                description: fullDescription || `${rawComp} is hiring for a ${jobTitle} role in ${jobLoc}. Direct posting listed on LinkedIn with job ID ${jobId}. Key requirements include software engineering, system architecture, and modern application development.`,
                 posted_time: postedTime,
                 employment_type: "Full-time",
                 department: "Engineering",
-                salary: "$150,000 - $280,000 USD",
+                salary: normalizeSalary("$150,000 - $280,000 USD"),
                 provider: "LinkedIn",
                 first_seen: new Date().toISOString(),
                 status: "new"
@@ -613,6 +775,39 @@ function extractRequiredYoe(text: string): number {
     }
   }
   return 0;
+}
+
+/**
+ * Normalise a raw salary string to a consistent "$X - $Y" format.
+ * - Strips trailing ".00" decimals from each number
+ * - Ensures the leading "$" is present on both sides of a range
+ * - Removes trailing currency codes (USD / EUR / GBP) and trailing punctuation
+ * Examples:
+ *   "$388,000.00 - $558,000.00." → "$388,000 - $558,000"
+ *   "$150,000 - $280,000 USD"   → "$150,000 - $280,000"
+ *   "€80,000"                   → "€80,000"
+ */
+function normalizeSalary(raw: string): string {
+  // Strip trailing punctuation / currency codes / whitespace
+  let s = raw.replace(/\s*(USD|EUR|GBP)\s*$/i, "").replace(/[.,;]+$/, "").trim();
+
+  // Helper: format a single dollar token — strip .00-style decimals, keep symbol
+  const formatAmount = (token: string): string =>
+    token.replace(/(\d)\.\d{2}(?=\b|,|$)/g, "$1").trim();
+
+  // Split on the separator (en-dash, em-dash, or hyphen, with optional spaces)
+  const separatorMatch = s.match(/^([\$€£][\d,.]+)\s*[-–—]\s*([\$€£]?[\d,.]+)$/);
+  if (separatorMatch) {
+    const symbol = separatorMatch[1].match(/^[\$€£]/)?.[0] ?? "$";
+    const lo = formatAmount(separatorMatch[1]);
+    // Re-attach symbol to the high end if it was stripped
+    const hiRaw = separatorMatch[2].match(/^[\$€£]/) ? separatorMatch[2] : symbol + separatorMatch[2];
+    const hi = formatAmount(hiRaw);
+    return `${lo} - ${hi}`;
+  }
+
+  // Single value — just clean up decimals
+  return formatAmount(s);
 }
 
 function generateHeuristicEvaluation(job: Job, resume: ResumeData, config?: AppConfig) {
@@ -699,7 +894,6 @@ function generateHeuristicEvaluation(job: Job, resume: ResumeData, config?: AppC
 
   const reasons = [
     `Role title and seniority (${job.title}) align with candidate engineering background.`,
-    `Target company (${job.company}) matches target organization preferences.`,
     `Matched core skills: ${matchedSkills.length > 0 ? matchedSkills.join(", ") : "TypeScript, React, Node.js"}.`
   ];
 
@@ -825,23 +1019,26 @@ function generateMarkdownReport(jobs: Job[], profileId?: string): string {
     fs.writeFileSync(REPORT_PATH, md, "utf-8");
   }
 
-  // Save datetime & profile-named report in output/profiles/<profileId>/reports/
+  // Save timestamped history report in output/profiles/<profileId>/reports/
+  // Only write when there are actual evaluated jobs — skip empty/zero-result runs.
   try {
-    const profileReportsDir = getProfileReportsDir(pid);
-    const store = loadProfilesData();
-    const profileObj = store.profiles.find((p) => p.id === pid);
-    const profileName = profileObj ? profileObj.name : "Report";
-    const cleanProfileName = profileName
-      .replace(/[^a-zA-Z0-9_\-]/g, "_")
-      .replace(/_+/g, "_")
-      .replace(/^_+|_+$/g, "");
+    if (evaluatedJobs.length > 0) {
+      const profileReportsDir = getProfileReportsDir(pid);
+      const store = loadProfilesData();
+      const profileObj = store.profiles.find((p) => p.id === pid);
+      const profileName = profileObj ? profileObj.name : "Report";
+      const cleanProfileName = profileName
+        .replace(/[^a-zA-Z0-9_\-]/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_+|_+$/g, "");
 
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const dateFormatted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
-    const historyFilename = `report_${cleanProfileName || "scan"}_${dateFormatted}.md`;
-    const historyFile = path.join(profileReportsDir, historyFilename);
-    fs.writeFileSync(historyFile, md, "utf-8");
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const dateFormatted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+      const historyFilename = `report_${cleanProfileName || "scan"}_${dateFormatted}.md`;
+      const historyFile = path.join(profileReportsDir, historyFilename);
+      fs.writeFileSync(historyFile, md, "utf-8");
+    }
   } catch (err) {
     console.error("Error saving historical report file:", err);
   }
@@ -899,7 +1096,7 @@ app.post("/api/profiles/select", (req, res) => {
 
   // Sync to config files & resume file
   saveConfig(target.config);
-  saveResume(target.resume.content);
+  writeFileIfChanged(RESUME_PATH, target.resume.content);
 
   // Sync profile's jobs database & report
   const profileJobs = loadJobsDB(profileId);
@@ -956,7 +1153,7 @@ app.post("/api/profiles", (req, res) => {
 
   // Sync to config, resume, jobs and report files
   saveConfig(baseConfig);
-  saveResume(baseResumeContent);
+  writeFileIfChanged(RESUME_PATH, baseResumeContent);
   saveJobsDB(baseJobs, newId);
   const reportMd = generateMarkdownReport(baseJobs, newId);
 
@@ -973,7 +1170,7 @@ app.post("/api/profiles", (req, res) => {
   });
 });
 
-app.put("/api/profiles/:id", (req, res) => {
+app.put("/api/profiles/:id", async (req, res) => {
   const { id } = req.params;
   const { name, config: newConfig, resumeContent } = req.body;
 
@@ -991,7 +1188,7 @@ app.put("/api/profiles/:id", (req, res) => {
     existing.config = newConfig;
   }
   if (resumeContent !== undefined) {
-    existing.resume = parseResumeDetails(resumeContent, existing.config.skills);
+    existing.resume = await parseResumeDetailsEnriched(resumeContent, existing.config.skills);
   }
   existing.updatedAt = new Date().toISOString();
 
@@ -1001,7 +1198,7 @@ app.put("/api/profiles/:id", (req, res) => {
   // If this is the active profile, sync to files
   if (id === store.activeProfileId) {
     if (newConfig) saveConfig(newConfig);
-    if (resumeContent !== undefined) saveResume(resumeContent);
+    if (resumeContent !== undefined) await saveResume(resumeContent);
   }
 
   const updatedStore = loadProfilesData();
@@ -1048,7 +1245,7 @@ app.delete("/api/profiles/:id", (req, res) => {
     store.activeProfileId = store.profiles[0].id;
     const newActive = store.profiles[0];
     saveConfig(newActive.config);
-    saveResume(newActive.resume.content);
+    writeFileIfChanged(RESUME_PATH, newActive.resume.content);
   }
 
   saveProfilesData(store);
@@ -1086,10 +1283,46 @@ app.get("/api/resume", (req, res) => {
   res.json(loadResume());
 });
 
-app.post("/api/resume", (req, res) => {
+app.post("/api/resume", async (req, res) => {
   const { content } = req.body;
-  const resume = saveResume(content || "");
+  const resume = await saveResume(content || "");
   res.json({ success: true, resume });
+});
+
+// Dedicated skill re-extraction endpoint — runs Gemini on the provided content
+// and persists the updated skills to profiles.json without rewriting resume.md.
+app.post("/api/resume/extract-skills", async (req, res) => {
+  try {
+    const { content } = req.body;
+    if (!content?.trim()) {
+      return res.status(400).json({ error: "No resume content provided." });
+    }
+
+    const config = loadConfig();
+    console.log("[RESUME] Starting Gemini skill extraction via /api/resume/extract-skills...");
+    const skills = await extractSkillsWithGemini(content, config.skills);
+    console.log(`[RESUME] Extraction complete — ${skills.length} skills: ${skills.slice(0, 8).join(", ")}...`);
+
+    // Persist updated skills to the active profile without touching resume.md
+    try {
+      if (fs.existsSync(PROFILES_JSON_PATH)) {
+        const store: ProfilesStore = JSON.parse(fs.readFileSync(PROFILES_JSON_PATH, "utf-8"));
+        const active = store.profiles.find((p) => p.id === store.activeProfileId);
+        if (active) {
+          active.resume = { ...active.resume, parsedSkills: skills };
+          active.updatedAt = new Date().toISOString();
+          saveProfilesData(store);
+        }
+      }
+    } catch (syncErr) {
+      console.error("[RESUME] Failed to sync skills to profiles.json:", syncErr);
+    }
+
+    res.json({ success: true, skills });
+  } catch (err: any) {
+    console.error("[RESUME] extract-skills error:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post("/api/resume/parse-pdf", async (req, res) => {
@@ -1138,7 +1371,7 @@ CRITICAL INSTRUCTION FOR EXPERIENCE COMPUTATION:
             ];
 
         const response = await ai.models.generateContent({
-          model: "gemini-3.6-flash",
+          model: loadConfig().gemini_model || "gemini-3.1-flash-lite",
           contents: [{ role: "user", parts }],
         });
 
@@ -1185,7 +1418,7 @@ CRITICAL INSTRUCTION FOR EXPERIENCE COMPUTATION:
       }
     }
 
-    const resume = saveResume(extractedMarkdown);
+    const resume = await saveResume(extractedMarkdown);
     res.json({ success: true, resume, extractedMarkdown, rawTextLength: extractedPdfText.length });
   } catch (err: any) {
     console.error("PDF Resume parse error:", err);
@@ -1240,7 +1473,7 @@ async function evaluateJobWithGemini(
   recommended_actions: string[];
   model_used: string;
 }> {
-  const selectedModel = configObj.gemini_model || "gemini-2.5-flash-lite";
+  const selectedModel = configObj.gemini_model || "gemini-3.1-flash-lite";
 
   if (!hasValidApiKey()) {
     const resumeParsed = parseResumeDetails(resumeContent, configObj.skills);
@@ -1386,7 +1619,8 @@ app.post("/api/jobs/evaluate", async (req, res) => {
       return res.status(400).json({ error: "Job ID or Job object required" });
     }
 
-    const resumeObj = loadResume();
+    const activeProfileData = loadProfilesData().profiles.find(p => p.id === getActiveProfileId());
+    const resumeObj = activeProfileData?.resume ?? loadResume();
     const configObj = loadConfig();
     const resumeText = inputResume || resumeObj.content;
 
@@ -1459,8 +1693,9 @@ app.post("/api/pipeline/run", async (req, res) => {
       return res.json({ success: false, cancelled: true, summary: "Scan cancelled by user.", logs });
     }
 
-    addLog("RESUME", "Loading candidate resume from resume/resume.md...");
-    const resume = loadResume();
+    addLog("RESUME", "Loading candidate resume...");
+    const activeProfileData = loadProfilesData().profiles.find(p => p.id === getActiveProfileId());
+    const resume = activeProfileData?.resume ?? loadResume();
     addLog("RESUME", `Resume loaded: "${resume.title}"`, `Skills detected: ${resume.parsedSkills.slice(0, 6).join(", ")}...`);
 
     let tfParam = "r86400";
@@ -1512,7 +1747,14 @@ app.post("/api/pipeline/run", async (req, res) => {
       const id = `li-${jobId}`;
 
       const prev = previousJobsDB.find((j) => j.id === id || j.url === c.url);
-      if (prev && prev.score !== undefined) {
+
+      // Only reuse a previous evaluation if the stored description is real (not a placeholder).
+      // If the description is the generic fallback, treat the job as new so it gets
+      // re-fetched and re-evaluated with the actual job description.
+      const isPlaceholderDescription = (desc?: string) =>
+        !desc || desc.includes("Key requirements include software engineering, system architecture");
+
+      if (prev && prev.score !== undefined && !isPlaceholderDescription(prev.description)) {
         return {
           ...c,
           id,
@@ -1542,7 +1784,7 @@ app.post("/api/pipeline/run", async (req, res) => {
     let evaluatedJobsCount = 0;
 
     if (config.auto_evaluate && jobsNeedingEval.length > 0) {
-      const selectedModel = config.gemini_model || "gemini-2.5-flash-lite";
+      const selectedModel = config.gemini_model || "gemini-3.1-flash-lite";
       addLog("GEMINI_AI", `Evaluating ${jobsNeedingEval.length} un-evaluated job(s) with AI Matcher engine (Model: ${selectedModel})...`);
 
       for (const job of jobsNeedingEval) {
@@ -1746,6 +1988,22 @@ app.get("/api/reports/:filename", (req, res) => {
       createdAt: stats.mtime.toISOString(),
       path: `output/profiles/${pid}/reports/${path.basename(filePath)}`,
     });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/reports/:filename", (req, res) => {
+  try {
+    const filename = path.basename(req.params.filename);
+    const pid = getActiveProfileId();
+    const profileReportsDir = getProfileReportsDir(pid);
+    const filePath = path.join(profileReportsDir, filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "Report not found" });
+    }
+    fs.unlinkSync(filePath);
+    res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

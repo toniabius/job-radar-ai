@@ -840,6 +840,7 @@ export default function App() {
         onCancel={handleCancelPipeline}
         isRunning={isRunningPipeline}
         logs={pipelineLogs}
+        geminiModel={config?.gemini_model}
         scanResult={lastScanResult}
       />
     </div>

@@ -55,6 +55,8 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
   const [parseProgress, setParseProgress] = useState(0);
   const [parseStage, setParseStage] = useState('Reading PDF text layer...');
   const [pdfUploadMessage, setPdfUploadMessage] = useState<string | null>(null);
+  const [isExtractingSkills, setIsExtractingSkills] = useState(false);
+  const [localParsedSkills, setLocalParsedSkills] = useState<string[]>(initialResume.parsedSkills || []);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // New Profile Modal State
@@ -72,6 +74,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
   useEffect(() => {
     setConfig(initialConfig);
     setResumeContent(initialResume.content || '');
+    setLocalParsedSkills(initialResume.parsedSkills || []);
     if (activeProfile) {
       setProfileName(activeProfile.name);
     }
@@ -100,7 +103,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
     yaml += `salary_currency: "${cfg.salary_currency || "USD"}"\n`;
     yaml += `lookback_hours: ${cfg.lookback_hours || 24}\n`;
     yaml += `auto_evaluate: ${cfg.auto_evaluate}\n`;
-    yaml += `gemini_model: "${cfg.gemini_model || "gemini-2.5-flash-lite"}"\n`;
+    yaml += `gemini_model: "${cfg.gemini_model || "gemini-3.1-flash-lite"}"\n`;
     yaml += `max_jobs_per_company: ${cfg.max_jobs_per_company || 5}\n`;
     return yaml;
   };
@@ -220,6 +223,29 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
       setPdfUploadMessage('⚠️ Failed to upload and process PDF file.');
       setIsParsingPdf(false);
       setParseProgress(0);
+    }
+  };
+
+  // Re-extract skills from current resume content using Gemini
+  const handleReExtractSkills = async () => {
+    if (!resumeContent.trim()) return;
+    setIsExtractingSkills(true);
+    try {
+      const res = await fetch('/api/resume/extract-skills', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: resumeContent }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.skills) && data.skills.length > 0) {
+          setLocalParsedSkills(data.skills);
+        }
+      }
+    } catch (err) {
+      console.error('Skill re-extraction error:', err);
+    } finally {
+      setIsExtractingSkills(false);
     }
   };
 
@@ -437,7 +463,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
             <FileText className="w-3.5 h-3.5 mr-1.5 text-emerald-600" />
             Candidate Resume (`resume.md`)
             <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] bg-blue-100 text-blue-800 font-mono">
-              {initialResume.parsedSkills?.length || 0} Skills
+              {localParsedSkills.length} Skills
             </span>
           </button>
         </div>
@@ -763,12 +789,12 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                         Gemini Evaluation Model:
                       </label>
                       <select
-                        value={config.gemini_model || 'gemini-2.5-flash-lite'}
+                        value={config.gemini_model || 'gemini-3.1-flash-lite'}
                         onChange={(e) => setConfig({ ...config, gemini_model: e.target.value })}
                         className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:border-emerald-500"
                       >
-                        <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite — Recommended (Fast, High Quota)</option>
-                        <option value="gemini-2.5-flash">gemini-2.5-flash — Standard Flash</option>
+                        <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite — Recommended (Fast, Cost-Efficient)</option>
+                        <option value="gemini-3.5-flash">gemini-3.5-flash — Best for Agentic & Coding Tasks</option>
                         <option value="gemini-3.6-flash">gemini-3.6-flash — Advanced Reasoning</option>
                         <option value="gemini-1.5-flash">gemini-1.5-flash — Legacy Flash Model</option>
                       </select>
@@ -1073,12 +1099,40 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
           </div>
 
           {/* Detected Skills */}
-          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex flex-wrap items-center space-x-2">
-            <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span className="font-bold text-slate-800 shrink-0 text-xs">Detected Skills for "{profileName}":</span>
+          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center space-x-2">
+                <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="font-bold text-slate-800 text-xs">
+                  Detected Skills for "{profileName}":
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                  {localParsedSkills.length} skills
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleReExtractSkills}
+                disabled={isExtractingSkills || !resumeContent.trim()}
+                className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Re-extract skills from current resume text using Gemini AI"
+              >
+                {isExtractingSkills ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                    Extracting...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                    Re-evaluate with AI
+                  </>
+                )}
+              </button>
+            </div>
             <div className="flex flex-wrap gap-1.5 items-center">
-              {initialResume.parsedSkills && initialResume.parsedSkills.length > 0 ? (
-                initialResume.parsedSkills.map((skill, idx) => (
+              {localParsedSkills.length > 0 ? (
+                localParsedSkills.map((skill, idx) => (
                   <span key={idx} className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
                     {skill}
                   </span>

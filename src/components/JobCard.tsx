@@ -21,14 +21,14 @@ export const JobCard: React.FC<JobCardProps> = ({
   const getScoreBadge = (score?: number) => {
     if (score === undefined) {
       return (
-        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
+        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200 shrink-0 whitespace-nowrap">
           Un-evaluated
         </span>
       );
     }
     if (score >= 80) {
       return (
-        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-xs">
+        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-xs shrink-0 whitespace-nowrap">
           <Sparkles className="w-3 h-3 mr-1 text-emerald-500 fill-emerald-500" />
           {score}% Match
         </span>
@@ -36,13 +36,13 @@ export const JobCard: React.FC<JobCardProps> = ({
     }
     if (score >= 60) {
       return (
-        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 shrink-0 whitespace-nowrap">
           {score}% Good
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200">
+      <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200 shrink-0 whitespace-nowrap">
         {score}% Weak
       </span>
     );
@@ -57,8 +57,8 @@ export const JobCard: React.FC<JobCardProps> = ({
       <div>
         {/* Top Header: Company, Provider Badge, Score */}
         <div className="flex items-start justify-between gap-3 mb-3">
-          <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-            <span className="font-bold text-slate-900 text-sm tracking-tight">{job.company}</span>
+          <div className="flex items-center space-x-2 flex-wrap gap-y-1 min-w-0">
+            <span className="font-bold text-slate-900 text-sm tracking-tight truncate max-w-[160px]">{job.company}</span>
             <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${getProviderColor(job.provider)}`}>
               {job.provider}
             </span>
@@ -96,17 +96,6 @@ export const JobCard: React.FC<JobCardProps> = ({
             </div>
           )}
         </div>
-
-        {/* Summary or Description Snippet */}
-        {job.summary ? (
-          <p className="text-xs text-slate-600 line-clamp-2 bg-slate-50 p-2.5 rounded-lg border border-slate-100 italic mb-3">
-            "{job.summary}"
-          </p>
-        ) : (
-          <p className="text-xs text-slate-500 line-clamp-2 mb-3">
-            {job.description}
-          </p>
-        )}
 
         {/* Match Bullet Highlights */}
         {job.reasons && job.reasons.length > 0 && (
