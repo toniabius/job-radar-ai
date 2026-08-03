@@ -8,6 +8,7 @@ interface JobCardProps {
   onSelect: (job: Job) => void;
   onEvaluate: (job: Job) => void;
   onDelete: (id: string) => void;
+  onToggleApplied?: (job: Job, applied: boolean) => void;
   isEvaluating?: boolean;
 }
 
@@ -16,6 +17,7 @@ export const JobCard: React.FC<JobCardProps> = ({
   onSelect,
   onEvaluate,
   onDelete,
+  onToggleApplied,
   isEvaluating,
 }) => {
   const getScoreBadge = (score?: number) => {
@@ -94,6 +96,29 @@ export const JobCard: React.FC<JobCardProps> = ({
               <Briefcase className="w-3.5 h-3.5 text-slate-400" />
               <span>{job.salary}</span>
             </div>
+          )}
+        </div>
+
+        {/* Applied Status Checkbox */}
+        <div className="flex items-center justify-between gap-2 mb-3 bg-slate-50/90 px-2.5 py-1.5 rounded-lg border border-slate-200/60">
+          <label
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center space-x-2 cursor-pointer select-none"
+          >
+            <input
+              type="checkbox"
+              checked={job.applied || false}
+              onChange={(e) => onToggleApplied?.(job, e.target.checked)}
+              className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+            />
+            <span className={`text-xs font-bold ${job.applied ? 'text-emerald-700' : 'text-slate-600'}`}>
+              {job.applied ? '✓ Applied' : 'Applied?'}
+            </span>
+          </label>
+          {job.applied && job.applied_date && (
+            <span className="text-[10px] text-slate-400 font-mono">
+              Applied {job.applied_date}
+            </span>
           )}
         </div>
 

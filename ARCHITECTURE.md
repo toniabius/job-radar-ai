@@ -55,10 +55,10 @@ Job Radar AI uses a **Full-Stack Monolithic Architecture** combining a **React 1
 - **State Management**: React State (`useState`, `useEffect`, `useRef`, `useCallback`) synchronized with Express REST endpoints.
 - **Key Modules**:
   - `App.tsx`: Main dashboard controller, cancellation handler via `AbortController` and `/api/pipeline/cancel` API endpoint, job list filtering (All Qualified, Strong Match, Good Match, Status filters), and search indexing.
-  - `ConfigEditor.tsx`: Multi-profile manager and configurator for Target Roles, Minimum Score Threshold (`minimum_score`), Target Companies (optional open web mode), Salary Ranges, Lookback Window, Preferred Locations, Markdown Resume Editor, PDF resume parser, and interactive **Detected Skills Manager** (manual skill addition, preset buttons, skill deletion, and AI skill re-extraction).
+  - `ConfigEditor.tsx`: Multi-profile manager and configurator for Target Roles, Minimum Score Threshold (`minimum_score`), Target Companies (optional open web mode), Salary Ranges, Lookback Window, Preferred Locations, Markdown Resume Editor, PDF resume parser, interactive **Detected Skills Manager**, **Manage Candidate Profiles Modal**, and **Delete Profile** confirmation modal with multi-profile safety checks.
   - `ScanProgressModal.tsx`: Terminal-styled console displaying real-time execution steps with a prominent **Cancel Scan** control.
   - `ReportView.tsx`: Rendered Markdown viewer with styled external listing links (`target="_blank" rel="noopener noreferrer"`).
-  - `DatabaseViewer.tsx`: Dedicated database manager providing full database inspection, provider filtering, single-job **AI Evaluate**, and **Evaluate All Pending** batch processing.
+  - `DatabaseViewer.tsx`: Dedicated database manager providing full database inspection, interactive sorting (by Match Score, Discovery Date, Title, Company Name), provider filtering, single-job **AI Evaluate**, and **Evaluate All Pending** batch processing.
   - `JobCard.tsx` & `JobDetailsModal.tsx`: Rich job cards showing match levels, salary tags, missing skills, and recommended application actions.
 
 ---

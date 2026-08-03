@@ -615,12 +615,14 @@ async function fetchLiveLinkedInJobs(
   roles: string[],
   preferredLocations: string[],
   timeFilter: string,
-  isCancelled?: () => boolean
-): Promise<Omit<Job, 'id'>[]> {
+  isCancelled?: () => boolean,
+  addLog?: (stage: "SCANNER" | "CONFIG" | "RESUME" | "NORMALIZER" | "GEMINI_AI" | "REPORT" | "SUCCESS" | "ERROR", message: string, details?: string) => void
+): Promise<{ jobs: Omit<Job, 'id'>[]; totalScanned: number }> {
   const tprMap: Record<string, string> = { past_24h: "r86400", past_week: "r604800", past_month: "r2592000" };
   const tpr = tprMap[timeFilter] || (typeof timeFilter === "string" && timeFilter.startsWith("r") ? timeFilter : "r86400");
 
   const results: Omit<Job, 'id'>[] = [];
+  let totalScanned = 0;
   const targetCompanies = companies.map((c) => c.name.trim()).filter(Boolean);
   const targetRoleList = roles.length > 0 ? roles : ["Software Engineer"];
 
@@ -629,151 +631,158 @@ async function fetchLiveLinkedInJobs(
 
   for (const companyName of companyLoop) {
     if (isCancelled && isCancelled()) break;
-    for (const role of targetRoleList.slice(0, 2)) {
+    for (const role of targetRoleList) {
       if (isCancelled && isCancelled()) break;
-      try {
-        const query = companyName
-          ? encodeURIComponent(`"${companyName}" ${role}`)
-          : encodeURIComponent(role);
-        const url = `https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=${query}&f_TPR=${tpr}&start=0`;
-        const res = await fetch(url, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9"
+      
+      // Paginate through search results pages (start=0, start=25, start=50, start=75)
+      for (let startPage = 0; startPage <= 75; startPage += 25) {
+        if (isCancelled && isCancelled()) break;
+        try {
+          const query = companyName
+            ? encodeURIComponent(`"${companyName}" ${role}`)
+            : encodeURIComponent(role);
+          const url = `https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=${query}&f_TPR=${tpr}&start=${startPage}`;
+          
+          const res = await fetch(url, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Accept-Language": "en-US,en;q=0.9"
+            }
+          });
+          if (!res.ok) break;
+          const html = await res.text();
+          const cardMatches = [...html.matchAll(/<li[\s\S]*?<\/li>/g)];
+          if (cardMatches.length === 0) {
+            // No more job cards on this page, stop paginating this query
+            break;
           }
-        });
-        if (!res.ok) continue;
-        const html = await res.text();
-        const cardMatches = [...html.matchAll(/<li[\s\S]*?<\/li>/g)];
 
-        const urnRegex = /data-entity-urn="urn:li:jobPosting:(\d+)"/;
-        const titleRegex = /base-search-card__title">[\s\S]*?([^\s<][^<]*)/;
-        const companyRegex = /base-search-card__subtitle">([\s\S]*?)<\/h4>/;
-        const locationRegex = /job-search-card__location">[\s\S]*?([^\s<][^<]*)/;
-        const timeRegex = /datetime="([^"]+)"/;
+          if (addLog) {
+            const label = companyName ? `${companyName} • ${role}` : role;
+            addLog("SCANNER", `Scanned page (start=${startPage}) for "${label}"... Found ${cardMatches.length} raw listings.`);
+          }
 
-        for (const match of cardMatches) {
-          const cardHtml = match[0];
-          const urnM = cardHtml.match(urnRegex);
-          const titleM = cardHtml.match(titleRegex);
-          const compM = cardHtml.match(companyRegex);
-          const locM = cardHtml.match(locationRegex);
-          const timeM = cardHtml.match(timeRegex);
+          const urnRegex = /data-entity-urn="urn:li:jobPosting:(\d+)"/;
+          const titleRegex = /base-search-card__title">[\s\S]*?([^\s<][^<]*)/;
+          const companyRegex = /base-search-card__subtitle">([\s\S]*?)<\/h4>/;
+          const locationRegex = /job-search-card__location">[\s\S]*?([^\s<][^<]*)/;
+          const timeRegex = /datetime="([^"]+)"/;
 
-          if (urnM && titleM) {
-            const jobId = urnM[1];
-            const jobTitle = titleM[1].trim();
-            const rawComp = compM ? compM[1].replace(/<[^>]*>/g, "").trim() : companyName;
-            const jobLoc = locM ? locM[1].trim() : "United States";
-            const postedTime = timeM ? timeM[1] : "Recently";
-            const viewUrl = `https://www.linkedin.com/jobs/view/${jobId}/`;
+          for (const match of cardMatches) {
+            const cardHtml = match[0];
+            const urnM = cardHtml.match(urnRegex);
+            const titleM = cardHtml.match(titleRegex);
+            const compM = cardHtml.match(companyRegex);
+            const locM = cardHtml.match(locationRegex);
+            const timeM = cardHtml.match(timeRegex);
 
-            // STRICT TARGET COMPANY FILTER:
-            // When target companies are specified, drop any result whose company does not match
-            if (targetCompanies.length > 0) {
-              const compLower = rawComp.toLowerCase();
-              const isMatch = targetCompanies.some((tc) => {
-                const tcLower = tc.toLowerCase();
-                return compLower.includes(tcLower) || tcLower.includes(compLower);
-              });
-              if (!isMatch) {
-                continue;
-              }
-            }
+            if (urnM && titleM) {
+              totalScanned++;
+              const jobId = urnM[1];
+              const jobTitle = titleM[1].trim();
+              const rawComp = compM ? compM[1].replace(/<[^>]*>/g, "").trim() : companyName;
+              const jobLoc = locM ? locM[1].trim() : "United States";
+              const postedTime = timeM ? timeM[1] : "Recently";
+              const viewUrl = `https://www.linkedin.com/jobs/view/${jobId}/`;
 
-            // STRICT PREFERRED LOCATION FILTER:
-            if (preferredLocations && preferredLocations.length > 0) {
-              if (!isLocationMatch(jobLoc, preferredLocations)) {
-                continue; // Skip job posting if location is outside preferred locations
-              }
-            }
-
-            // Avoid duplicate job URLs
-            if (!results.some(r => r.url === viewUrl)) {
-              // Fetch the full job description from the individual posting page
-              let fullDescription = "";
-              try {
-                const jobPageRes = await fetch(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${jobId}`, {
-                  headers: {
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept-Language": "en-US,en;q=0.9"
-                  }
+              // STRICT TARGET COMPANY FILTER:
+              if (targetCompanies.length > 0) {
+                const compLower = rawComp.toLowerCase();
+                const isMatch = targetCompanies.some((tc) => {
+                  const tcLower = tc.toLowerCase();
+                  return compLower.includes(tcLower) || tcLower.includes(compLower);
                 });
-                if (jobPageRes.ok) {
-                  const jobPageHtml = await jobPageRes.text();
-                  const descMatch = jobPageHtml.match(/<div[^>]+class="[^"]*show-more-less-html__markup[^"]*"[^>]*>([\s\S]*?)<\/div>/i)
-                    || jobPageHtml.match(/<div[^>]+id="job-details"[^>]*>([\s\S]*?)<\/div>/i)
-                    || jobPageHtml.match(/<section[^>]+class="[^"]*description[^"]*"[^>]*>([\s\S]*?)<\/section>/i);
-                  if (descMatch) {
-                    fullDescription = descMatch[1]
-                      .replace(/<br\s*\/?>/gi, "\n")
-                      .replace(/<li[^>]*>/gi, "\n• ")
-                      .replace(/<[^>]+>/g, "")
-                      .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-                      .replace(/&nbsp;/g, " ").replace(/&#39;/g, "'").replace(/&quot;/g, '"')
-                      .replace(/\n{3,}/g, "\n\n")
-                      .trim();
-                    console.log(`[JD FETCH] ✓ Got description for job ${jobId} (${fullDescription.length} chars)`);
-                  } else {
-                    console.log(`[JD FETCH] ✗ No description match in HTML for job ${jobId} (HTTP ${jobPageRes.status}, body ${jobPageHtml.length} chars)`);
-                  }
-                  // Also try to extract salary if present
-                  // Pattern order: most specific first
-                  // 1. "range for this role is $X - $Y" (Netflix-style)
-                  // 2. "compensation ... $X - $Y" (general comp context)
-                  // 3. "$X - $Y per year/annual" (explicit annual marker)
-                  // 4. Lone dollar amount with per-year marker
-                  const salaryMatch =
-                    jobPageHtml.match(/range\s+for\s+this\s+role\s+is\s+([\$€£][\d,.]+\s*[-–]\s*[\$€£]?[\d,.]+(?:\s*(?:USD|EUR|GBP))?)/i)
-                    || jobPageHtml.match(/salary\s+range[^<]{0,60}?([\$€£][\d,.]+\s*[-–]\s*[\$€£]?[\d,.]+(?:\s*(?:USD|EUR|GBP))?)/i)
-                    || jobPageHtml.match(/compensation[^<]{0,120}?([\$€£][\d,.]+(?:\s*[-–]\s*[\$€£]?[\d,.]+)?(?:\s*[KkMm])?(?:\s*(?:USD|EUR|GBP))?)/i)
-                    || jobPageHtml.match(/([\$€£][\d,.]+(?:\s*[-–]\s*[\$€£]?[\d,.]+)?\s*(?:USD|EUR|GBP)?)\s*(?:per\s+year|\/yr|annual)/i);
-                  if (salaryMatch) {
-                    results.push({
-                      company: rawComp,
-                      title: jobTitle,
-                      location: jobLoc,
-                      url: viewUrl,
-                      description: fullDescription || `${rawComp} is hiring for a ${jobTitle} role in ${jobLoc}.`,
-                      posted_time: postedTime,
-                      employment_type: "Full-time",
-                      department: "Engineering",
-                      salary: normalizeSalary(salaryMatch[1].trim()),
-                      provider: "LinkedIn",
-                      first_seen: new Date().toISOString(),
-                      status: "new"
-                    });
-                    continue;
-                  }
+                if (!isMatch) {
+                  continue;
                 }
-              } catch (fetchErr) {
-                console.error(`[JD FETCH] ✗ Exception fetching job description for ${jobId}:`, fetchErr);
               }
 
-              results.push({
-                company: rawComp,
-                title: jobTitle,
-                location: jobLoc,
-                url: viewUrl,
-                description: fullDescription || `${rawComp} is hiring for a ${jobTitle} role in ${jobLoc}. Direct posting listed on LinkedIn with job ID ${jobId}. Key requirements include software engineering, system architecture, and modern application development.`,
-                posted_time: postedTime,
-                employment_type: "Full-time",
-                department: "Engineering",
-                salary: normalizeSalary("$150,000 - $280,000 USD"),
-                provider: "LinkedIn",
-                first_seen: new Date().toISOString(),
-                status: "new"
-              });
+              // STRICT PREFERRED LOCATION FILTER:
+              if (preferredLocations && preferredLocations.length > 0) {
+                if (!isLocationMatch(jobLoc, preferredLocations)) {
+                  continue; // Skip job posting if location is outside preferred locations
+                }
+              }
+
+              // Avoid duplicate job URLs
+              if (!results.some(r => r.url === viewUrl)) {
+                let fullDescription = "";
+                try {
+                  const jobPageRes = await fetch(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${jobId}`, {
+                    headers: {
+                      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                      "Accept-Language": "en-US,en;q=0.9"
+                    }
+                  });
+                  if (jobPageRes.ok) {
+                    const jobPageHtml = await jobPageRes.text();
+                    const descMatch = jobPageHtml.match(/<div[^>]+class="[^"]*show-more-less-html__markup[^"]*"[^>]*>([\s\S]*?)<\/div>/i)
+                      || jobPageHtml.match(/<div[^>]+id="job-details"[^>]*>([\s\S]*?)<\/div>/i)
+                      || jobPageHtml.match(/<section[^>]+class="[^"]*description[^"]*"[^>]*>([\s\S]*?)<\/section>/i);
+                    if (descMatch) {
+                      fullDescription = descMatch[1]
+                        .replace(/<br\s*\/?>/gi, "\n")
+                        .replace(/<li[^>]*>/gi, "\n• ")
+                        .replace(/<[^>]+>/g, "")
+                        .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+                        .replace(/&nbsp;/g, " ").replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+                        .replace(/\n{3,}/g, "\n\n")
+                        .trim();
+                    }
+                    
+                    const salaryMatch =
+                      jobPageHtml.match(/range\s+for\s+this\s+role\s+is\s+([\$€£][\d,.]+\s*[-–]\s*[\$€£]?[\d,.]+(?:\s*(?:USD|EUR|GBP))?)/i)
+                      || jobPageHtml.match(/salary\s+range[^<]{0,60}?([\$€£][\d,.]+\s*[-–]\s*[\$€£]?[\d,.]+(?:\s*(?:USD|EUR|GBP))?)/i)
+                      || jobPageHtml.match(/compensation[^<]{0,120}?([\$€£][\d,.]+(?:\s*[-–]\s*[\$€£]?[\d,.]+)?(?:\s*[KkMm])?(?:\s*(?:USD|EUR|GBP))?)/i)
+                      || jobPageHtml.match(/([\$€£][\d,.]+(?:\s*[-–]\s*[\$€£]?[\d,.]+)?\s*(?:USD|EUR|GBP)?)\s*(?:per\s+year|\/yr|annual)/i);
+                    if (salaryMatch) {
+                      results.push({
+                        company: rawComp,
+                        title: jobTitle,
+                        location: jobLoc,
+                        url: viewUrl,
+                        description: fullDescription || `${rawComp} is hiring for a ${jobTitle} role in ${jobLoc}.`,
+                        posted_time: postedTime,
+                        employment_type: "Full-time",
+                        department: "Engineering",
+                        salary: normalizeSalary(salaryMatch[1].trim()),
+                        provider: "LinkedIn",
+                        first_seen: new Date().toISOString(),
+                        status: "new"
+                      });
+                      continue;
+                    }
+                  }
+                } catch (fetchErr) {
+                  console.error(`[JD FETCH] Exception fetching job description for ${jobId}:`, fetchErr);
+                }
+
+                results.push({
+                  company: rawComp,
+                  title: jobTitle,
+                  location: jobLoc,
+                  url: viewUrl,
+                  description: fullDescription || `${rawComp} is hiring for a ${jobTitle} role in ${jobLoc}. Direct posting listed on LinkedIn with job ID ${jobId}. Key requirements include software engineering, system architecture, and modern application development.`,
+                  posted_time: postedTime,
+                  employment_type: "Full-time",
+                  department: "Engineering",
+                  salary: normalizeSalary("$150,000 - $280,000 USD"),
+                  provider: "LinkedIn",
+                  first_seen: new Date().toISOString(),
+                  status: "new"
+                });
+              }
             }
           }
+        } catch (err) {
+          console.error(`Error fetching live LinkedIn jobs for ${companyName} ${role} page ${startPage}:`, err);
+          break;
         }
-      } catch (err) {
-        console.error(`Error fetching live LinkedIn jobs for ${companyName} ${role}:`, err);
       }
     }
   }
 
-  return results;
+  return { jobs: results, totalScanned };
 }
 
 function extractRequiredYoe(text: string): number {
@@ -1759,13 +1768,15 @@ app.post("/api/pipeline/run", async (req, res) => {
     }
 
     // Fetch live job postings from LinkedIn Guest API for active company providers & preferred locations
-    const liveCandidates = await fetchLiveLinkedInJobs(activeCompanies, targetRoles, preferredLocs, tfParam, isCancelled);
+    const scanData = await fetchLiveLinkedInJobs(activeCompanies, targetRoles, preferredLocs, tfParam, isCancelled, addLog);
+    const liveCandidates = scanData.jobs;
+    const totalScannedCount = scanData.totalScanned;
 
     if (isCancelled()) {
       return res.json({ success: false, cancelled: true, summary: "Scan cancelled by user.", logs });
     }
 
-    addLog("SCANNER", `Discovered ${liveCandidates.length} live job posting(s) matching your configured target company providers and preferred locations (${preferredLocs.join(", ") || "Any"}).`);
+    addLog("SCANNER", `Discovered and scanned ${totalScannedCount} total job posting(s) across LinkedIn search pages. ${liveCandidates.length} posting(s) matched your location and company filters.`);
 
     const ts = Date.now().toString().slice(-5);
     // Map latest scan candidates, preserving scores/evaluations if job was previously evaluated
@@ -1855,8 +1866,8 @@ app.post("/api/pipeline/run", async (req, res) => {
     addLog("SUCCESS", "Pipeline execution finished successfully! Database and output/report.md updated.");
 
     const summaryText = existingJobs.length > 0
-      ? `Scan complete. Found ${existingJobs.length} live job posting(s) for latest scan and evaluated ${evaluatedJobsCount} job(s) with Gemini AI.`
-      : `Scan complete. No postings matched configured criteria in the selected lookback window.`;
+      ? `Scan complete. Scanned ${totalScannedCount} raw job posting(s) across target roles. Found ${existingJobs.length} posting(s) matching your location and company criteria.`
+      : `Scan complete. Scanned ${totalScannedCount} raw job posting(s), but none matched criteria in selected window.`;
 
     res.json({
       success: true,
@@ -1864,6 +1875,7 @@ app.post("/api/pipeline/run", async (req, res) => {
       newJobsCount: existingJobs.length,
       evaluatedCount: evaluatedJobsCount,
       totalJobs: existingJobs.length,
+      totalScanned: totalScannedCount,
       summary: summaryText,
       reportPath: "output/report.md",
     });

@@ -28,6 +28,7 @@ export default function App() {
     newJobsCount?: number;
     evaluatedCount?: number;
     totalJobs?: number;
+    totalScanned?: number;
     summary?: string;
   } | null>(null);
   const [evaluatingJobId, setEvaluatingJobId] = useState<string | null>(null);
@@ -550,9 +551,11 @@ export default function App() {
             <div className="flex flex-wrap items-center justify-between text-xs text-slate-500 mb-4 px-1 gap-2">
               <div className="flex items-center space-x-2 font-medium flex-wrap">
                 <Clock className="w-3.5 h-3.5 text-slate-400" />
-                <span>Last Scan: <strong className="text-slate-800 font-semibold">{lastRunTime ? lastRunTime : 'Not run yet (click "Scan" to execute scan)'}</strong></span>
+                <span>Last Scan: <strong className="text-slate-800 font-semibold">{lastRunTime ? lastRunTime : 'Not run yet'}</strong></span>
                 <span className="text-slate-300">•</span>
-                <span>Scanned <strong className="text-slate-800 font-semibold">{lastScanResult?.totalJobs !== undefined ? lastScanResult.totalJobs : jobs.length}</strong> Listings</span>
+                <span>Scanned <strong className="text-slate-800 font-semibold">{lastScanResult?.totalScanned !== undefined ? lastScanResult.totalScanned : jobs.length}</strong> Listings</span>
+                <span className="text-slate-300">•</span>
+                <span><strong className="text-emerald-700 font-semibold">{jobs.length}</strong> Matched in Inventory</span>
               </div>
               <div className="flex items-center space-x-1.5 bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full text-xs font-semibold border border-indigo-200">
                 <User className="w-3.5 h-3.5 text-indigo-500" />
@@ -754,6 +757,7 @@ export default function App() {
                     onSelect={setSelectedJob}
                     onEvaluate={handleEvaluateJob}
                     onDelete={handleDeleteJob}
+                    onToggleApplied={handleToggleApplied}
                     isEvaluating={evaluatingJobId === job.id}
                   />
                 ))}

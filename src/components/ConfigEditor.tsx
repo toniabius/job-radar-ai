@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Settings, Save, Check, Plus, Trash2, Building, Sliders, MapPin, Zap,
   DollarSign, Search, Briefcase, X, Clock, Sparkles, User, Copy, FileText,
-  Upload, Loader2, ChevronDown, UserPlus, RefreshCw, Layers
+  Upload, Loader2, ChevronDown, UserPlus, RefreshCw, Layers, Users, AlertTriangle
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { AppConfig, CompanyConfig, ResumeData, UserProfile } from '../types';
@@ -78,10 +78,12 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
     onSaveProfile(activeProfileId, profileName, config, resumeContent, updated);
   };
 
-  // New Profile Modal State
+  // Profile Management Modal States
   const [showNewProfileModal, setShowNewProfileModal] = useState(false);
   const [newProfileNameInput, setNewProfileNameInput] = useState('');
   const [copyCurrentSettings, setCopyCurrentSettings] = useState(true);
+  const [showManageProfilesModal, setShowManageProfilesModal] = useState(false);
+  const [profileToDelete, setProfileToDelete] = useState<UserProfile | null>(null);
 
   // Config Form Adders
   const [newCompanyName, setNewCompanyName] = useState('');
@@ -159,21 +161,22 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
     }
   };
 
-  const handleDeleteCurrentProfile = async () => {
+  const confirmDeleteProfile = async () => {
+    if (!profileToDelete) return;
     if (profiles.length <= 1) {
       alert('Cannot delete the last remaining candidate profile.');
+      setProfileToDelete(null);
       return;
     }
 
-    if (window.confirm(`Are you sure you want to delete profile "${activeProfile.name}"?`)) {
-      setIsProcessingProfile(true);
-      try {
-        await onDeleteProfile(activeProfileId);
-      } catch (err) {
-        console.error('Delete Profile Error:', err);
-      } finally {
-        setIsProcessingProfile(false);
-      }
+    setIsProcessingProfile(true);
+    try {
+      await onDeleteProfile(profileToDelete.id);
+      setProfileToDelete(null);
+    } catch (err) {
+      console.error('Delete Profile Error:', err);
+    } finally {
+      setIsProcessingProfile(false);
     }
   };
 
@@ -347,8 +350,18 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
+              onClick={() => setShowManageProfilesModal(true)}
+              className="inline-flex items-center px-3.5 py-2 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 shadow-xs transition-colors cursor-pointer"
+              title="Manage all candidate profiles"
+            >
+              <Users className="w-3.5 h-3.5 mr-1.5 text-blue-400" />
+              Manage Profiles ({profiles.length})
+            </button>
+
+            <button
+              type="button"
               onClick={() => setShowYamlModal(!showYamlModal)}
-              className="inline-flex items-center px-3 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 shadow-xs transition-colors"
+              className="inline-flex items-center px-3 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 shadow-xs transition-colors cursor-pointer"
             >
               <Sliders className="w-3.5 h-3.5 mr-1.5 text-amber-400" />
               {showYamlModal ? 'Hide config.yaml' : 'View config.yaml'}
@@ -386,16 +399,23 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
               )}
             </button>
 
-            {profiles.length > 1 && (
-              <button
-                type="button"
-                onClick={handleDeleteCurrentProfile}
-                className="p-2 rounded-lg bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 border border-slate-700 transition-colors"
-                title="Delete Current Profile"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
+            <button
+              type="button"
+              disabled={profiles.length <= 1}
+              onClick={() => {
+                const activeP = profiles.find((p) => p.id === activeProfileId);
+                if (activeP) setProfileToDelete(activeP);
+              }}
+              className={`inline-flex items-center px-3 py-2 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                profiles.length > 1
+                  ? 'bg-slate-800 hover:bg-rose-900/80 text-rose-300 border border-slate-700'
+                  : 'bg-slate-800/50 text-slate-500 border border-slate-800 cursor-not-allowed opacity-60'
+              }`}
+              title={profiles.length > 1 ? `Delete current candidate profile` : 'Cannot delete sole candidate profile'}
+            >
+              <Trash2 className="w-3.5 h-3.5 mr-1.5 text-rose-400" />
+              Delete Profile
+            </button>
           </div>
         </div>
 
@@ -1337,7 +1357,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                 <button
                   type="submit"
                   disabled={!newProfileNameInput.trim() || isProcessingProfile}
-                  className="px-4 py-2 rounded-xl font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs inline-flex items-center"
+                  className="px-4 py-2 rounded-xl font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs inline-flex items-center cursor-pointer"
                 >
                   {isProcessingProfile ? (
                     <>
@@ -1350,6 +1370,195 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MANAGE PROFILES MODAL */}
+      {showManageProfilesModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center space-x-2">
+                <Users className="w-5 h-5 text-emerald-600" />
+                <h3 className="font-bold text-slate-900 text-base">Manage Candidate Profiles</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowManageProfilesModal(false)}
+                className="text-slate-400 hover:text-slate-600 font-bold p-1 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="py-4 space-y-3 max-h-[380px] overflow-y-auto">
+              <p className="text-xs text-slate-500">
+                Switch active candidate profile or delete unneeded candidate profiles. Profiles isolate target search roles, custom resumes, and scanned job databases.
+              </p>
+
+              <div className="space-y-2">
+                {profiles.map((p) => {
+                  const isActive = p.id === activeProfileId;
+                  const rolesCount = p.config?.target_roles?.length || 0;
+                  const skillsCount = p.resume?.parsedSkills?.length || 0;
+
+                  return (
+                    <div
+                      key={p.id}
+                      className={`p-3.5 rounded-xl border flex items-center justify-between gap-3 transition-colors ${
+                        isActive
+                          ? 'bg-emerald-50/60 border-emerald-300'
+                          : 'bg-slate-50 border-slate-200 hover:bg-slate-100/80'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3 min-w-0">
+                        <div
+                          className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 font-bold ${
+                            isActive
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-slate-200 text-slate-700'
+                          }`}
+                        >
+                          <User className="w-4 h-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center space-x-2">
+                            <span className="font-bold text-xs text-slate-900 truncate">
+                              {p.name}
+                            </span>
+                            {isActive && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-600 text-white">
+                                Active Profile
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                            {rolesCount} Target Roles • {skillsCount} Detected Skills
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-2 shrink-0">
+                        {!isActive && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onSelectProfile(p.id);
+                            }}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-300 shadow-2xs transition-colors cursor-pointer"
+                          >
+                            Switch To
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          disabled={profiles.length <= 1}
+                          onClick={() => setProfileToDelete(p)}
+                          className={`p-2 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                            profiles.length > 1
+                              ? 'bg-white hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-slate-200 hover:border-rose-300'
+                              : 'bg-slate-100 text-slate-300 border border-slate-200 cursor-not-allowed opacity-50'
+                          }`}
+                          title={
+                            profiles.length > 1
+                              ? `Delete profile "${p.name}"`
+                              : 'Cannot delete sole candidate profile'
+                          }
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowManageProfilesModal(false);
+                  setShowNewProfileModal(true);
+                }}
+                className="inline-flex items-center px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-800 transition-colors cursor-pointer"
+              >
+                <UserPlus className="w-3.5 h-3.5 mr-1.5 text-emerald-600" />
+                + Create New Profile
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowManageProfilesModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE CONFIRMATION MODAL */}
+      {profileToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center space-x-3 text-rose-600 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">Delete Candidate Profile</h3>
+                <p className="text-xs text-rose-600 font-semibold">This action cannot be undone</p>
+              </div>
+            </div>
+
+            <div className="py-3 text-xs text-slate-600 space-y-2">
+              <p>
+                Are you sure you want to permanently delete profile{' '}
+                <strong className="text-slate-900">"{profileToDelete.name}"</strong>?
+              </p>
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-slate-500 text-[11px] leading-relaxed space-y-1">
+                <p className="font-semibold text-slate-700">⚠️ Data Removal Details:</p>
+                <ul className="list-disc pl-4 space-y-0.5">
+                  <li>Target search configuration & roles</li>
+                  <li>Custom resume details & detected skills</li>
+                  <li>Profile-scoped job inventory database</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isProcessingProfile}
+                onClick={() => setProfileToDelete(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                disabled={isProcessingProfile}
+                onClick={confirmDeleteProfile}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white shadow-xs inline-flex items-center cursor-pointer"
+              >
+                {isProcessingProfile ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                    Yes, Delete Profile
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
