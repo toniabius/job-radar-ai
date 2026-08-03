@@ -37,23 +37,42 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
     for (const log of logs) {
       if (log.stage === 'GEMINI_AI') {
         isEvaluating = true;
-        // Check for "Evaluated X/Y Roles — Role @ Company"
-        const match = log.message.match(/Evaluated\s+(\d+)\/(\d+)\s+Roles(?:\s*—\s*(.+))?/i);
-        if (match) {
-          current = parseInt(match[1], 10);
-          total = parseInt(match[2], 10);
-          if (match[3]) currentRole = match[3];
-        } else {
-          // Check for "Evaluating N un-evaluated job(s)"
-          const initMatch = log.message.match(/Evaluating\s+(\d+)\s+un-evaluated/i);
-          if (initMatch && total === 0) {
-            total = parseInt(initMatch[1], 10);
-          }
+        const msg = log.message;
+
+        // Match "Evaluating (12/23) "Title" @ Company..."
+        const evalMatch = msg.match(/Evaluating\s+\((\d+)\/(\d+)\)\s+"([^"]+)"\s+@\s+([^\n.]+)/i);
+        if (evalMatch) {
+          current = parseInt(evalMatch[1], 10);
+          total = parseInt(evalMatch[2], 10);
+          currentRole = `${evalMatch[3]} @ ${evalMatch[4].trim()}`;
+        }
+
+        // Match "[EVAL DONE] (12/23) "Title" @ Company..."
+        const doneMatch = msg.match(/\[EVAL DONE\]\s+\((\d+)\/(\d+)\)\s+"([^"]+)"\s+@\s+([^\n->]+)/i);
+        if (doneMatch) {
+          current = parseInt(doneMatch[1], 10);
+          total = parseInt(doneMatch[2], 10);
+          currentRole = `${doneMatch[3]} @ ${doneMatch[4].trim()}`;
+        }
+
+        // Match "Starting sequential AI evaluation for 23 job(s)..."
+        const initMatch = msg.match(/Starting.*evaluation for (\d+) job\(s\)/i);
+        if (initMatch && total === 0) {
+          total = parseInt(initMatch[1], 10);
+        }
+
+        // Legacy match
+        const legacyMatch = msg.match(/Evaluated\s+(\d+)\/(\d+)\s+Roles(?:\s*—\s*(.+))?/i);
+        if (legacyMatch) {
+          current = parseInt(legacyMatch[1], 10);
+          total = parseInt(legacyMatch[2], 10);
+          if (legacyMatch[3]) currentRole = legacyMatch[3];
         }
       }
     }
 
-    if (!isEvaluating || total === 0) return null;
+    if (!isEvaluating) return null;
+    if (total === 0) total = 1;
     const percent = Math.min(100, Math.round((current / total) * 100));
     return { current, total, percent, currentRole, isEvaluating };
   };
@@ -119,43 +138,30 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
         <div className="p-6 space-y-5 overflow-y-auto flex-1">
           {/* Live Progress Indicator (while running) */}
           {isRunning && (
-            <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 border border-slate-700/90 rounded-xl p-4 text-xs text-white space-y-3 shadow-lg">
+            <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 border border-slate-700/90 rounded-xl p-4 text-xs text-white space-y-2.5 shadow-lg">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
-                  <Sparkles className="w-4 h-4 text-emerald-400 animate-pulse" />
+                  <Sparkles className="w-4 h-4 text-emerald-400" />
                   <span className="font-bold text-sm text-slate-100">
                     {evalProgress ? 'AI Gemini Evaluation Phase' : 'Scanning Job Listings Phase'}
                   </span>
                 </div>
-                {evalProgress ? (
+                {evalProgress && (
                   <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-mono text-xs font-bold">
-                    Evaluated {evalProgress.current}/{evalProgress.total} Roles ({evalProgress.percent}%)
-                  </span>
-                ) : (
-                  <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2.5 py-0.5 rounded-full font-mono text-xs font-semibold">
-                    Scanner Searching...
+                    Evaluating {evalProgress.current}/{evalProgress.total} ({evalProgress.percent}%)
                   </span>
                 )}
               </div>
 
               {evalProgress ? (
-                <div className="space-y-2">
-                  <div className="w-full bg-slate-700/80 h-3 rounded-full overflow-hidden p-0.5 border border-slate-600/50">
-                    <div
-                      className="bg-emerald-500 h-full rounded-full transition-all duration-300 ease-out shadow-sm shadow-emerald-500/50"
-                      style={{ width: `${Math.max(6, evalProgress.percent)}%` }}
-                    />
-                  </div>
-                  {evalProgress.currentRole && (
-                    <p className="text-[11px] text-slate-300 font-mono truncate">
-                      <span className="text-emerald-400 font-semibold">Evaluating:</span> {evalProgress.currentRole}
-                    </p>
-                  )}
-                </div>
+                <p className="text-[11px] text-slate-300 font-mono truncate">
+                  <span className="text-emerald-400 font-semibold">Evaluating ({evalProgress.current}/{evalProgress.total}):</span>{' '}
+                  {evalProgress.currentRole || 'In progress...'}
+                </p>
               ) : (
-                <div className="text-xs text-slate-300 font-mono text-[11px]">
-                  Discovered postings on LinkedIn Guest API. Pre-filtering by location & role...
-                </div>
+                <p className="text-[11px] text-slate-300 font-mono">
+                  <span className="text-blue-400 font-semibold">Status:</span> Scanning jobs from LinkedIn...
+                </p>
               )}
             </div>
           )}

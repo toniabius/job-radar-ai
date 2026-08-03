@@ -261,13 +261,27 @@ export default function App() {
     }
   };
 
-  // Evaluate all pending jobs in batch
+  // Evaluate all pending jobs in batch (parallel execution)
   const handleEvaluateAllJobs = async () => {
     setIsBulkEvaluating(true);
     try {
       const pendingJobs = jobs.filter((j) => j.score === undefined);
       const jobsToEval = pendingJobs.length > 0 ? pendingJobs : jobs;
-      for (const job of jobsToEval) {
+
+      const pMapUI = async <T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>) => {
+        const results: R[] = new Array(items.length);
+        let index = 0;
+        const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+          while (index < items.length) {
+            const i = index++;
+            results[i] = await fn(items[i]);
+          }
+        });
+        await Promise.all(workers);
+        return results;
+      };
+
+      await pMapUI(jobsToEval, 4, async (job) => {
         setEvaluatingJobId(job.id);
         const res = await fetch('/api/jobs/evaluate', {
           method: 'POST',
@@ -280,7 +294,8 @@ export default function App() {
             setJobs((prev) => prev.map((j) => (j.id === data.job.id ? data.job : j)));
           }
         }
-      }
+      });
+
       await fetchReport();
     } catch (err) {
       console.error('Bulk evaluation error:', err);
@@ -545,13 +560,14 @@ export default function App() {
       }
 
       let matchesScore = true;
+      const minThreshold = config?.minimum_score ?? 65;
       if (scoreFilter === 'STRONG') {
         matchesScore = (j.score || 0) >= 80;
       } else if (scoreFilter === 'GOOD') {
-        matchesScore = (j.score || 0) >= 60 && (j.score || 0) < 80;
+        matchesScore = (j.score || 0) >= minThreshold && (j.score || 0) < 80;
       } else {
-        // 'ALL' - Only display Good Match (>= 60) and Strong Match (>= 80), plus newly discovered unscored jobs
-        matchesScore = j.score === undefined || (j.score || 0) >= 60;
+        // 'ALL' - Only surface listings whose match score is over minimum AI match score (or unscored pending jobs)
+        matchesScore = j.score === undefined || (j.score || 0) >= minThreshold;
       }
 
       return matchesQuery && matchesCompany && matchesSalary && matchesLocation && matchesScore;
