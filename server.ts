@@ -752,8 +752,8 @@ async function fetchLiveLinkedInJobs(
             const label = labelParts.join(" • ");
             const webSearchUrl = `https://www.linkedin.com/jobs/search?keywords=${query}${locParam}&f_TPR=${tpr}${sb2Param}&start=${startPage}`;
 
-            // Pacing delay (600ms) between page queries to prevent rate limits
-            await new Promise((r) => setTimeout(r, 600));
+            // Pacing delay (2000ms / 2 seconds) between queries after finishing prior request to prevent LinkedIn rate limits
+            await new Promise((r) => setTimeout(r, 2000));
 
             let res = await fetch(url, {
               headers: {
@@ -1002,6 +1002,157 @@ function normalizeSalary(raw: string): string {
   return formatAmount(s);
 }
 
+function detectHardBlockerViolation(job: Job, hardBlockersText?: string): { isBlocked: boolean; reason: string } {
+  if (!hardBlockersText || !hardBlockersText.trim()) {
+    return { isBlocked: false, reason: "" };
+  }
+
+  const rawJobText = `${job.title} ${job.company} ${job.description || ''} ${job.department || ''}`.toLowerCase();
+  // Normalize job text: strip periods in "u.s." / "u.s" so "u.s. citizens" becomes "us citizens", "u.s. government" -> "us government"
+  const normJobText = rawJobText.replace(/u\.s\./g, "us").replace(/u\.s/g, "us");
+
+  const lines = hardBlockersText
+    .split("\n")
+    .map((l) => l.trim().replace(/^[-*•]\s*/, ""))
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const rawLine = line.toLowerCase();
+    const normLine = rawLine.replace(/u\.s\./g, "us").replace(/u\.s/g, "us");
+
+    // 1. Citizenship & Security Clearance Blocker Check
+    if (
+      normLine.includes("citizen") ||
+      normLine.includes("citizenship") ||
+      normLine.includes("clearance") ||
+      normLine.includes("security clearance") ||
+      normLine.includes("government contract") ||
+      normLine.includes("us citizen")
+    ) {
+      const isCitizenshipRequirement =
+        rawJobText.includes("u.s. citizen") ||
+        rawJobText.includes("u.s. citizens") ||
+        normJobText.includes("us citizen") ||
+        normJobText.includes("us citizens") ||
+        normJobText.includes("citizenship") ||
+        normJobText.includes("security clearance") ||
+        normJobText.includes("secret clearance") ||
+        normJobText.includes("top secret") ||
+        normJobText.includes("ts/sci") ||
+        normJobText.includes("government clearance") ||
+        normJobText.includes("government contract") ||
+        normJobText.includes("security requirements") ||
+        normJobText.includes("limited to us") ||
+        normJobText.includes("limited to u.s") ||
+        normJobText.includes("must be a us") ||
+        normJobText.includes("must be a u.s") ||
+        normJobText.includes("active clearance") ||
+        normJobText.includes("obtain and maintain") ||
+        normJobText.includes("eligibility to obtain");
+
+      if (isCitizenshipRequirement) {
+        return {
+          isBlocked: true,
+          reason: `Hard Blocker Triggered: Role requires U.S. Citizenship or Security Clearance ("${line}")`
+        };
+      }
+    }
+
+    // 2. Data Engineering / Data Architect Blocker Check
+    if (
+      normLine.includes("data engineer") ||
+      normLine.includes("data engineering") ||
+      normLine.includes("data architect")
+    ) {
+      if (
+        normJobText.includes("data engineer") ||
+        normJobText.includes("data engineering") ||
+        normJobText.includes("data architect")
+      ) {
+        return {
+          isBlocked: true,
+          reason: `Hard Blocker Triggered: Data Engineering role ("${line}")`
+        };
+      }
+    }
+
+    // 3. Pure Frontend Blocker Check
+    if (
+      normLine.includes("pure frontend") ||
+      normLine.includes("frontend only") ||
+      normLine.includes("frontend role") ||
+      normLine.includes("front end")
+    ) {
+      const titleLower = job.title.toLowerCase();
+      if (
+        titleLower.includes("frontend") ||
+        titleLower.includes("front end") ||
+        titleLower.includes("front-end") ||
+        normJobText.includes("pure frontend")
+      ) {
+        return {
+          isBlocked: true,
+          reason: `Hard Blocker Triggered: Pure Frontend role ("${line}")`
+        };
+      }
+    }
+
+    // 4. On-site 5 days Check
+    if (
+      normLine.includes("on-site") ||
+      normLine.includes("onsite") ||
+      normLine.includes("in-office") ||
+      normLine.includes("5 days")
+    ) {
+      if (
+        normJobText.includes("5 days in office") ||
+        normJobText.includes("5 days on-site") ||
+        normJobText.includes("100% on-site") ||
+        normJobText.includes("onsite 5 days")
+      ) {
+        return {
+          isBlocked: true,
+          reason: `Hard Blocker Triggered: 5-Day On-site requirement ("${line}")`
+        };
+      }
+    }
+
+    // 5. Web3 / Crypto / Gambling Check
+    if (
+      normLine.includes("web3") ||
+      normLine.includes("crypto") ||
+      normLine.includes("gambling")
+    ) {
+      if (
+        normJobText.includes("web3") ||
+        normJobText.includes("crypto") ||
+        normJobText.includes("blockchain") ||
+        normJobText.includes("gambling")
+      ) {
+        return {
+          isBlocked: true,
+          reason: `Hard Blocker Triggered: Restricted industry ("${line}")`
+        };
+      }
+    }
+
+    // 6. Generic phrase fallback match
+    const cleanKeyword = normLine
+      .replace(/i (don't|do not) (want|like) (any|a|to be)?/gi, "")
+      .replace(/requires?|requires? a|requires? us|avoid|no|without|never/gi, "")
+      .trim();
+
+    if (cleanKeyword.length >= 4 && normJobText.includes(cleanKeyword)) {
+      return {
+        isBlocked: true,
+        reason: `Hard Blocker Triggered: Role matches criteria ("${line}")`
+      };
+    }
+  }
+
+  return { isBlocked: false, reason: "" };
+}
+
 function generateHeuristicEvaluation(job: Job, resume: ResumeData, config?: AppConfig) {
   const text = `${job.title} ${job.company} ${job.description || ''} ${job.department || ''}`.toLowerCase();
 
@@ -1083,14 +1234,25 @@ function generateHeuristicEvaluation(job: Job, resume: ResumeData, config?: AppC
     overQualNote = `Over-Qualification: Candidate has ~${candidateYoe} years experience, but position is targeted at New Graduates / Early Career / Entry-Level applicants`;
   }
 
+  // Check Hard Blockers (if configured)
+  const hardBlockerCheck = detectHardBlockerViolation(job, config?.hard_blockers);
+  let hardBlockerPenalty = 0;
+  let hardBlockerNote = "";
+  if (hardBlockerCheck.isBlocked) {
+    hardBlockerPenalty = 75;
+    hardBlockerNote = hardBlockerCheck.reason;
+  }
+
   let hash = 0;
   for (let i = 0; i < job.title.length; i++) {
     hash = (hash << 5) - hash + job.title.charCodeAt(i);
     hash |= 0;
   }
   const variance = (Math.abs(hash) % 11) - 5;
-  const scoreCap = (candidateYoe >= 3 && isEntryLevelRole) ? 55 : 96;
-  const finalScore = Math.min(scoreCap, Math.max(10, baseScore + variance - locationPenalty - yoePenalty - overQualPenalty));
+  let scoreCap = (candidateYoe >= 3 && isEntryLevelRole) ? 55 : 96;
+  if (hardBlockerPenalty > 0) scoreCap = Math.min(scoreCap, 25);
+
+  const finalScore = Math.min(scoreCap, Math.max(10, baseScore + variance - locationPenalty - yoePenalty - overQualPenalty - hardBlockerPenalty));
 
   let matchLevel: 'Strong Match' | 'Good Match' | 'Weak Match' | 'Unmatched' = 'Good Match';
   if (finalScore >= 80) matchLevel = 'Strong Match';
@@ -1103,6 +1265,9 @@ function generateHeuristicEvaluation(job: Job, resume: ResumeData, config?: AppC
     `Matched core skills: ${matchedSkills.length > 0 ? matchedSkills.join(", ") : "TypeScript, React, Node.js"}.`
   ];
 
+  if (hardBlockerNote) {
+    reasons.unshift(hardBlockerNote);
+  }
   if (locationNote) {
     reasons.push(locationNote);
   }
@@ -1114,6 +1279,9 @@ function generateHeuristicEvaluation(job: Job, resume: ResumeData, config?: AppC
   }
 
   const missingList = [...missingSkills];
+  if (hardBlockerNote) {
+    missingList.unshift(hardBlockerNote);
+  }
   if (locationNote) {
     missingList.unshift(`Location: ${job.location}`);
   }
@@ -1124,7 +1292,7 @@ function generateHeuristicEvaluation(job: Job, resume: ResumeData, config?: AppC
     missingList.unshift(overQualNote);
   }
 
-  const noteSuffix = [locationNote ? '[Location penalty]' : '', yoeNote ? '[YOE penalty]' : '', overQualNote ? '[Over-qualified]' : ''].filter(Boolean).join(' ');
+  const noteSuffix = [hardBlockerNote ? '[Hard Blocker Triggered]' : '', locationNote ? '[Location penalty]' : '', yoeNote ? '[YOE penalty]' : '', overQualNote ? '[Over-qualified]' : ''].filter(Boolean).join(' ');
   return {
     score: finalScore,
     match_level: matchLevel,
@@ -1706,8 +1874,8 @@ async function evaluateJobWithGemini(
     return { ...heur, model_used: "ATS Heuristic Engine" };
   }
 
-  const primaryModel = configObj.gemini_model || "gemini-2.5-flash";
-  const candidateModels = [primaryModel, "gemini-2.5-flash", "gemini-1.5-flash"].filter((m, i, arr) => arr.indexOf(m) === i);
+  const primaryModel = configObj.gemini_model || "gemini-3.6-flash";
+  const candidateModels = [primaryModel, "gemini-3.6-flash", "gemini-3.1-flash-lite"].filter((m, i, arr) => arr.indexOf(m) === i);
 
   for (const selectedModel of candidateModels) {
     try {
@@ -1723,6 +1891,9 @@ ${configObj.min_salary || 200000} ${configObj.salary_currency || 'USD'} (Include
 === PREFERRED LOCATIONS ===
 ${configObj.locations && configObj.locations.length > 0 ? configObj.locations.join(", ") : "Any"}
 
+=== HARD BLOCKERS / CRITERIA TO AVOID ===
+${configObj.hard_blockers && configObj.hard_blockers.trim() ? configObj.hard_blockers.trim() : "None specified."}
+
 === JOB POSTING ===
 Title: ${job.title}
 Company: ${job.company}
@@ -1732,6 +1903,14 @@ Description:
 ${job.description}
 
 EVALUATION & SCORING RULES:
+0. CRITICAL HARD BLOCKERS CHECK — evaluate this FIRST:
+   - Carefully review the candidate's specified HARD BLOCKERS / CRITERIA TO AVOID above.
+   - If the job title, requirements, citizenship/clearance demands, responsibilities, or work arrangement match ANY of the candidate's specified hard blockers (e.g. requires US citizenship/security clearance, is a Data Engineer role when data engineering is blocked, pure frontend role when blocked, 5-day on-site when blocked, etc.):
+     * THIS IS A DEALBREAKER HARD BLOCKER VIOLATION.
+     * You MUST cap the final score at a maximum of 25 (range 0 - 25) and set match_level to 'Unmatched'.
+     * In summary, reasons, and missing_skills, explicitly highlight the triggered hard blocker (e.g., "Hard Blocker Triggered: Role requires US Citizenship / Security Clearance").
+     * Hard blocker penalties CANNOT be overridden by any skill matches or salary alignment.
+
 1. CRITICAL YEARS OF EXPERIENCE (YoE) COMPARISON RULE — apply this FIRST before all other scoring:
    - Carefully compute the candidate's total professional work experience in years from the resume timeline (e.g., start year of first job to present).
    - Extract the required minimum experience from the job posting (e.g., "8+ years required", "10+ years experience", "12+ years required").
@@ -1806,6 +1985,24 @@ Return JSON object matching schema:
 
       const resObj = JSON.parse(response.text || "{}");
       if (resObj && typeof resObj.score === "number") {
+        // Post-processing guardrail for Hard Blockers
+        const hbCheck = detectHardBlockerViolation(job, configObj.hard_blockers);
+        if (hbCheck.isBlocked) {
+          resObj.score = Math.min(resObj.score, 15);
+          resObj.match_level = 'Unmatched';
+          if (!Array.isArray(resObj.reasons)) resObj.reasons = [];
+          if (!resObj.reasons.some((r: string) => r.includes("Hard Blocker"))) {
+            resObj.reasons.unshift(hbCheck.reason);
+          }
+          if (!Array.isArray(resObj.missing_skills)) resObj.missing_skills = [];
+          if (!resObj.missing_skills.some((m: string) => m.includes("Hard Blocker"))) {
+            resObj.missing_skills.unshift(hbCheck.reason);
+          }
+          if (!resObj.summary || !resObj.summary.includes("Hard Blocker")) {
+            resObj.summary = `${hbCheck.reason}. ${resObj.summary || ''}`;
+          }
+        }
+
         return {
           ...resObj,
           model_used: selectedModel,

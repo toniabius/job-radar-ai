@@ -49,6 +49,7 @@ export interface AppConfig {
   auto_evaluate: boolean;
   gemini_model?: string;
   max_jobs_per_company: number;
+  hard_blockers?: string;
 }
 
 export interface ResumeData {

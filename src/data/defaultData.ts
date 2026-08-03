@@ -26,8 +26,9 @@ export const DEFAULT_CONFIG: AppConfig = {
   time_filter_value: 24,
   time_filter_unit: 'hours',
   auto_evaluate: true,
-  gemini_model: 'gemini-3.1-flash-lite',
+  gemini_model: 'gemini-3.6-flash',
   max_jobs_per_company: 5,
+  hard_blockers: '',
 };
 
 export const DEFAULT_RESUME: ResumeData = {
