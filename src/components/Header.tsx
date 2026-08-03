@@ -102,8 +102,7 @@ export const Header: React.FC<HeaderProps> = ({
                 : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
             }`}
           >
-            <User className="w-4 h-4 mr-1 text-emerald-600" />
-            <Settings className="w-3.5 h-3.5 mr-1.5" />
+            <Settings className="w-4 h-4 mr-1.5" />
             Config & Profiles
           </button>
 
@@ -139,7 +138,7 @@ export const Header: React.FC<HeaderProps> = ({
                 : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
             }`}
           >
-            <Terminal className="w-4 h-4 mr-1.5 text-amber-500" />
+            <Terminal className="w-4 h-4 mr-1.5" />
             Scan Logs
           </button>
         </nav>

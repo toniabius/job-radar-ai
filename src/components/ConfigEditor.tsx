@@ -272,15 +272,21 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
   };
 
   // Config Helpers
+  const saveUpdatedConfig = (newCfg: AppConfig) => {
+    setConfig(newCfg);
+    onSaveConfig(newCfg);
+    onSaveProfile(activeProfileId, profileName, newCfg, resumeContent, localParsedSkills);
+  };
+
   const toggleCompany = (index: number) => {
     const updated = [...config.companies];
     updated[index].enabled = !updated[index].enabled;
-    setConfig({ ...config, companies: updated });
+    saveUpdatedConfig({ ...config, companies: updated });
   };
 
   const deleteCompany = (index: number) => {
     const updated = config.companies.filter((_, i) => i !== index);
-    setConfig({ ...config, companies: updated });
+    saveUpdatedConfig({ ...config, companies: updated });
   };
 
   const addCompany = () => {
@@ -290,7 +296,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
       enabled: true,
       provider: 'LinkedIn',
     };
-    setConfig({ ...config, companies: [...config.companies, newComp] });
+    saveUpdatedConfig({ ...config, companies: [...config.companies, newComp] });
     setNewCompanyName('');
   };
 
@@ -299,14 +305,14 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
     if (!query) return;
     const currentRoles = config.target_roles || [];
     if (!currentRoles.includes(query)) {
-      setConfig({ ...config, target_roles: [...currentRoles, query] });
+      saveUpdatedConfig({ ...config, target_roles: [...currentRoles, query] });
     }
     if (!queryToAdd) setNewRoleQuery('');
   };
 
   const removeRoleQuery = (roleToRemove: string) => {
     const currentRoles = config.target_roles || [];
-    setConfig({
+    saveUpdatedConfig({
       ...config,
       target_roles: currentRoles.filter((r) => r !== roleToRemove),
     });
@@ -315,13 +321,13 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
   const addLocation = () => {
     if (!newLocation.trim()) return;
     if (!config.locations.includes(newLocation.trim())) {
-      setConfig({ ...config, locations: [...config.locations, newLocation.trim()] });
+      saveUpdatedConfig({ ...config, locations: [...config.locations, newLocation.trim()] });
     }
     setNewLocation('');
   };
 
   const removeLocation = (loc: string) => {
-    setConfig({ ...config, locations: config.locations.filter((l) => l !== loc) });
+    saveUpdatedConfig({ ...config, locations: config.locations.filter((l) => l !== loc) });
   };
 
   return (

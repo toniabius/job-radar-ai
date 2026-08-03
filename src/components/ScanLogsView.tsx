@@ -130,14 +130,6 @@ export const ScanLogsView: React.FC<ScanLogsViewProps> = ({
         {/* Action Buttons */}
         <div className="flex items-center space-x-2 flex-wrap">
           <button
-            onClick={onRefresh}
-            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition-colors"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRunning ? 'animate-spin text-emerald-400' : ''}`} />
-            <span>Refresh</span>
-          </button>
-
-          <button
             onClick={handleCopyLogs}
             disabled={filteredLogs.length === 0}
             className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition-colors disabled:opacity-50"
@@ -154,16 +146,6 @@ export const ScanLogsView: React.FC<ScanLogsViewProps> = ({
             <Trash2 className="w-3.5 h-3.5" />
             <span>Clear Logs</span>
           </button>
-
-          {!isRunning && (
-            <button
-              onClick={onRunScan}
-              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center space-x-1.5 shadow-md shadow-emerald-600/20 transition-all active:scale-95"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Run Scan</span>
-            </button>
-          )}
         </div>
       </div>
 
