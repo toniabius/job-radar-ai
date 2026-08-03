@@ -370,24 +370,6 @@ function saveConfig(config: AppConfig): void {
   }
 }
 
-// Concurrency helper function
-async function pMap<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let index = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (index < items.length) {
-      const i = index++;
-      results[i] = await fn(items[i], i);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
 let lastLinkedInReqTime = 0;
 
 async function fetchLinkedInWithRetry(
@@ -403,7 +385,7 @@ async function fetchLinkedInWithRetry(
   };
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    // Inter-request pacing (~600ms gap) across parallel workers to prevent thundering herd spikes
+    // Inter-request pacing (~600ms gap) to prevent rate limits
     const now = Date.now();
     const scheduled = Math.max(now, lastLinkedInReqTime + 600);
     lastLinkedInReqTime = scheduled;

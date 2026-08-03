@@ -261,40 +261,32 @@ export default function App() {
     }
   };
 
-  // Evaluate all pending jobs in batch (parallel execution)
+  // Evaluate all pending jobs sequentially (1-by-1)
   const handleEvaluateAllJobs = async () => {
     setIsBulkEvaluating(true);
     try {
       const pendingJobs = jobs.filter((j) => j.score === undefined);
       const jobsToEval = pendingJobs.length > 0 ? pendingJobs : jobs;
 
-      const pMapUI = async <T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>) => {
-        const results: R[] = new Array(items.length);
-        let index = 0;
-        const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-          while (index < items.length) {
-            const i = index++;
-            results[i] = await fn(items[i]);
-          }
-        });
-        await Promise.all(workers);
-        return results;
-      };
-
-      await pMapUI(jobsToEval, 4, async (job) => {
+      for (let i = 0; i < jobsToEval.length; i++) {
+        const job = jobsToEval[i];
         setEvaluatingJobId(job.id);
-        const res = await fetch('/api/jobs/evaluate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jobId: job.id, job }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.job) {
-            setJobs((prev) => prev.map((j) => (j.id === data.job.id ? data.job : j)));
+        try {
+          const res = await fetch('/api/jobs/evaluate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jobId: job.id, job }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.job) {
+              setJobs((prev) => prev.map((j) => (j.id === data.job.id ? data.job : j)));
+            }
           }
+        } catch (err) {
+          console.error(`Evaluation error for job ${job.id}:`, err);
         }
-      });
+      }
 
       await fetchReport();
     } catch (err) {
