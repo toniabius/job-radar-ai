@@ -283,6 +283,15 @@ function getProfileReportsDir(profileId?: string): string {
   return dir;
 }
 
+function getProfileLogsPath(profileId?: string): string {
+  const pid = profileId || getActiveProfileId();
+  const dir = path.join(process.cwd(), "output", "profiles", pid);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return path.join(dir, "pipeline_logs.json");
+}
+
 function saveProfilesData(store: ProfilesStore): void {
   writeFileIfChanged(PROFILES_JSON_PATH, JSON.stringify(store, null, 2));
 }
@@ -316,6 +325,17 @@ function loadResumeRaw(configSkills?: string[]): ResumeData {
 }
 
 function loadConfig(): AppConfig {
+  try {
+    if (fs.existsSync(PROFILES_JSON_PATH)) {
+      const store: ProfilesStore = JSON.parse(fs.readFileSync(PROFILES_JSON_PATH, "utf-8"));
+      const active = store.profiles.find((p) => p.id === store.activeProfileId);
+      if (active && active.config) {
+        return active.config;
+      }
+    }
+  } catch (err) {
+    console.error("Error loading profile config:", err);
+  }
   const cfg = loadConfigRaw();
   saveConfig(cfg);
   return cfg;
@@ -609,6 +629,53 @@ function isLocationMatch(jobLoc: string, preferredLocations: string[]): boolean 
 }
 
 let activePipelineCancelled = false;
+let isPipelineRunning = false;
+let currentPipelineLogs: PipelineLog[] = [];
+let currentPipelineResult: {
+  success?: boolean;
+  cancelled?: boolean;
+  newJobsCount?: number;
+  evaluatedCount?: number;
+  totalJobs?: number;
+  totalScanned?: number;
+  summary?: string;
+} | null = null;
+
+app.get("/api/pipeline/logs", (req, res) => {
+  const profileId = getActiveProfileId();
+  const logsPath = getProfileLogsPath(profileId);
+  let savedLogs: PipelineLog[] = [];
+  try {
+    if (fs.existsSync(logsPath)) {
+      savedLogs = JSON.parse(fs.readFileSync(logsPath, "utf-8"));
+    }
+  } catch (err) {
+    console.error("Error reading saved pipeline logs:", err);
+  }
+
+  const activeLogs = isPipelineRunning || currentPipelineLogs.length > 0 ? currentPipelineLogs : savedLogs;
+
+  res.json({
+    isRunning: isPipelineRunning,
+    logs: activeLogs,
+    result: currentPipelineResult,
+  });
+});
+
+app.delete("/api/pipeline/logs", (req, res) => {
+  const profileId = getActiveProfileId();
+  const logsPath = getProfileLogsPath(profileId);
+  currentPipelineLogs = [];
+  currentPipelineResult = null;
+  try {
+    if (fs.existsSync(logsPath)) {
+      fs.writeFileSync(logsPath, JSON.stringify([], null, 2), "utf-8");
+    }
+  } catch (e) {
+    // ignore
+  }
+  res.json({ success: true, message: "Pipeline logs cleared." });
+});
 
 async function fetchLiveLinkedInJobs(
   companies: { name: string }[],
@@ -657,16 +724,37 @@ async function fetchLiveLinkedInJobs(
             break;
           }
 
-          if (addLog) {
-            const label = companyName ? `${companyName} • ${role}` : role;
-            addLog("SCANNER", `Scanned page (start=${startPage}) for "${label}"... Found ${cardMatches.length} raw listings.`);
-          }
-
           const urnRegex = /data-entity-urn="urn:li:jobPosting:(\d+)"/;
           const titleRegex = /base-search-card__title">[\s\S]*?([^\s<][^<]*)/;
           const companyRegex = /base-search-card__subtitle">([\s\S]*?)<\/h4>/;
           const locationRegex = /job-search-card__location">[\s\S]*?([^\s<][^<]*)/;
           const timeRegex = /datetime="([^"]+)"/;
+
+          if (addLog) {
+            const label = companyName ? `${companyName} • ${role}` : role;
+            const webSearchUrl = `https://www.linkedin.com/jobs/search?keywords=${query}&f_TPR=${tpr}&start=${startPage}`;
+            const cardLinks: string[] = [];
+            for (const cm of cardMatches) {
+              const uM = cm[0].match(urnRegex);
+              const tM = cm[0].match(titleRegex);
+              const cM = cm[0].match(companyRegex);
+              if (uM && tM) {
+                const jId = uM[1];
+                const jTitle = tM[1].trim();
+                const jComp = cM ? cM[1].replace(/<[^>]*>/g, "").trim() : (companyName || "Company");
+                cardLinks.push(`• ${jTitle} (${jComp}): https://www.linkedin.com/jobs/view/${jId}/`);
+              }
+            }
+            const logDetails = [
+              `LinkedIn Web Search Page: ${webSearchUrl}`,
+              `LinkedIn API Endpoint: ${url}`,
+              cardLinks.length > 0
+                ? `\nDiscovered ${cardLinks.length} raw job postings on this page:\n${cardLinks.slice(0, 10).join("\n")}${cardLinks.length > 10 ? `\n...and ${cardLinks.length - 10} more` : ""}`
+                : ""
+            ].filter(Boolean).join("\n");
+
+            addLog("SCANNER", `Scanned search page (start=${startPage}) for "${label}"... Found ${cardMatches.length} raw listings. Link: ${webSearchUrl}`, logDetails);
+          }
 
           for (const match of cardMatches) {
             const cardHtml = match[0];
@@ -1699,34 +1787,59 @@ app.post("/api/pipeline/cancel", (req, res) => {
 
 app.post("/api/pipeline/run", async (req, res) => {
   activePipelineCancelled = false;
+  isPipelineRunning = true;
+  currentPipelineLogs = [];
+  currentPipelineResult = null;
+  try {
+    const logsPath = getProfileLogsPath();
+    fs.writeFileSync(logsPath, JSON.stringify([], null, 2), "utf-8");
+  } catch (e) {
+    // ignore
+  }
+
   const isCancelled = () => req.destroyed || activePipelineCancelled;
 
   const logs: PipelineLog[] = [];
   const addLog = (stage: PipelineLog["stage"], message: string, details?: string) => {
-    logs.push({
+    const entry: PipelineLog = {
       id: Math.random().toString(36).substring(7),
       timestamp: new Date().toLocaleTimeString(),
       stage,
       message,
       details,
-    });
+    };
+    logs.push(entry);
+    currentPipelineLogs.push(entry);
+
+    try {
+      const logsPath = getProfileLogsPath();
+      fs.writeFileSync(logsPath, JSON.stringify(currentPipelineLogs, null, 2), "utf-8");
+    } catch (e) {
+      // ignore
+    }
   };
 
   try {
     addLog("CONFIG", "Loading runtime configuration from config/config.yaml...");
     const config = loadConfig();
-    const activeCompanies = config.companies.filter((c) => c.enabled);
+    const allCompanies = config.companies || [];
+    const activeCompanies = allCompanies.filter((c) => c.enabled);
+    const disabledCompanies = allCompanies.filter((c) => !c.enabled);
     const targetRoles = config.target_roles && config.target_roles.length > 0
       ? config.target_roles
       : ["Software Engineer", "Full Stack AI Engineer"];
 
     addLog(
       "CONFIG",
-      `Loaded configuration: ${activeCompanies.length > 0 ? `${activeCompanies.length} active company target providers` : 'Open Web Search Mode (no company restrictions)'} across ${targetRoles.length} search role queries`,
-      `Companies: ${activeCompanies.length > 0 ? activeCompanies.map((c) => `${c.name} (${c.provider})`).join(", ") : "All Open Web ATS Providers"} | Roles: ${targetRoles.join(", ")}`
+      `Loaded configuration: ${activeCompanies.length} enabled company target provider(s) out of ${allCompanies.length} configured company entry/entries across ${targetRoles.length} search role queries`,
+      `Active Enabled Companies (${activeCompanies.length}): ${activeCompanies.length > 0 ? activeCompanies.map((c) => `${c.name} (${c.provider})`).join(", ") : "None (Open Web Search Mode)"}` +
+      (disabledCompanies.length > 0 ? `\nDisabled Companies (${disabledCompanies.length}): ${disabledCompanies.map((c) => `${c.name} (${c.provider})`).join(", ")} (Note: Disabled companies are skipped during scan. Enable them in Search Config/Candidate Profile)` : "") +
+      `\nTarget Search Roles (${targetRoles.length}): ${targetRoles.join(", ")}`
     );
 
     if (isCancelled()) {
+      isPipelineRunning = false;
+      currentPipelineResult = { cancelled: true, summary: "Scan cancelled by user." };
       return res.json({ success: false, cancelled: true, summary: "Scan cancelled by user.", logs });
     }
 
@@ -1854,6 +1967,8 @@ app.post("/api/pipeline/run", async (req, res) => {
     }
 
     if (isCancelled()) {
+      isPipelineRunning = false;
+      currentPipelineResult = { cancelled: true, summary: "Scan cancelled by user. No results were saved." };
       return res.json({ success: false, cancelled: true, summary: "Scan cancelled by user. No results were saved.", logs });
     }
 
@@ -1869,6 +1984,16 @@ app.post("/api/pipeline/run", async (req, res) => {
       ? `Scan complete. Scanned ${totalScannedCount} raw job posting(s) across target roles. Found ${existingJobs.length} posting(s) matching your location and company criteria.`
       : `Scan complete. Scanned ${totalScannedCount} raw job posting(s), but none matched criteria in selected window.`;
 
+    isPipelineRunning = false;
+    currentPipelineResult = {
+      success: true,
+      newJobsCount: existingJobs.length,
+      evaluatedCount: evaluatedJobsCount,
+      totalJobs: existingJobs.length,
+      totalScanned: totalScannedCount,
+      summary: summaryText,
+    };
+
     res.json({
       success: true,
       logs,
@@ -1880,6 +2005,8 @@ app.post("/api/pipeline/run", async (req, res) => {
       reportPath: "output/report.md",
     });
   } catch (error: any) {
+    isPipelineRunning = false;
+    currentPipelineResult = { success: false, summary: `Pipeline execution failed: ${error.message}` };
     addLog("ERROR", `Pipeline execution failed: ${error.message}`);
     res.status(500).json({ success: false, logs, error: error.message });
   }

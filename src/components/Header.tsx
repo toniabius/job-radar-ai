@@ -1,9 +1,9 @@
 import React from 'react';
-import { Radar, Play, FileText, Database, Settings, User, Sparkles, Activity, History } from 'lucide-react';
+import { Radar, Play, FileText, Database, Settings, User, Sparkles, Activity, History, Terminal } from 'lucide-react';
 
 interface HeaderProps {
-  activeTab: 'dashboard' | 'database' | 'config' | 'report';
-  setActiveTab: (tab: 'dashboard' | 'database' | 'config' | 'report') => void;
+  activeTab: 'dashboard' | 'database' | 'config' | 'report' | 'logs';
+  setActiveTab: (tab: 'dashboard' | 'database' | 'config' | 'report' | 'logs') => void;
   onRunPipeline: () => void;
   isRunningPipeline: boolean;
   totalJobs: number;
@@ -129,6 +129,18 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <History className="w-4 h-4 mr-1.5" />
             Scan History
+          </button>
+
+          <button
+            onClick={() => setActiveTab('logs')}
+            className={`inline-flex items-center px-3 py-2 border-b-2 text-xs font-medium whitespace-nowrap transition-colors ${
+              activeTab === 'logs'
+                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-md font-bold'
+                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
+            }`}
+          >
+            <Terminal className="w-4 h-4 mr-1.5 text-amber-500" />
+            Scan Logs
           </button>
         </nav>
       </div>

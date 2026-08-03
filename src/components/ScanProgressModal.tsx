@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Loader2, CheckCircle2, AlertCircle, Terminal, ChevronDown, ChevronUp, X, Sparkles, Database, Search, FileText, XCircle } from 'lucide-react';
+import React, { useState } from 'react';
+import { Loader2, CheckCircle2, Terminal, ChevronDown, ChevronUp, X, Sparkles, XCircle } from 'lucide-react';
 import { PipelineLog } from '../types';
 
 interface ScanProgressModalProps {
@@ -23,68 +23,35 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
   onCancel,
   isRunning,
   logs,
-  geminiModel,
   scanResult,
 }) => {
-  const [progressPercent, setProgressPercent] = useState<number>(0);
-  const [showLogs, setShowLogs] = useState<boolean>(false);
-  const [currentStageText, setCurrentStageText] = useState<string>('Initializing scan pipeline...');
+  const [showLogs, setShowLogs] = useState<boolean>(true);
 
-  // Simulate smooth progress animation steps while isRunning is true
-  useEffect(() => {
-    if (!isOpen) {
-      setProgressPercent(0);
-      return;
-    }
+  // Helper to format text with clickable URLs
+  const renderFormattedText = (text: string) => {
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const parts = text.split(urlRegex);
 
-    if (isRunning) {
-      setProgressPercent(10);
-      setCurrentStageText('Loading configuration and candidate resume profile...');
-
-      const timer1 = setTimeout(() => {
-        setProgressPercent(35);
-        setCurrentStageText('Scanning LinkedIn job feeds for target companies...');
-      }, 800);
-
-      const timer2 = setTimeout(() => {
-        setProgressPercent(60);
-        setCurrentStageText('Normalizing listings & detecting un-evaluated postings...');
-      }, 1800);
-
-      const timer3 = setTimeout(() => {
-        setProgressPercent(85);
-        setCurrentStageText(`Evaluating job matches with ${geminiModel || 'Gemini AI'} engine...`);
-      }, 2800);
-
-      return () => {
-        clearTimeout(timer1);
-        clearTimeout(timer2);
-        clearTimeout(timer3);
-      };
-    } else if (logs.length > 0 || scanResult) {
-      setProgressPercent(100);
-      setCurrentStageText('Scan completed successfully!');
-    }
-  }, [isRunning, isOpen, logs.length, scanResult]);
+    return parts.map((part, idx) => {
+      if (part.match(urlRegex)) {
+        return (
+          <a
+            key={idx}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-amber-400 hover:text-amber-300 underline font-medium break-all"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {part}
+          </a>
+        );
+      }
+      return <span key={idx}>{part}</span>;
+    });
+  };
 
   if (!isOpen) return null;
-
-  const steps = [
-    { label: 'Config & Profile Loaded', stageKey: 'CONFIG', icon: FileText },
-    { label: 'ATS Feeds Scanned', stageKey: 'SCANNER', icon: Search },
-    { label: 'Job Listings Normalized', stageKey: 'NORMALIZER', icon: Database },
-    { label: 'Gemini AI Evaluation', stageKey: 'GEMINI_AI', icon: Sparkles },
-    { label: 'Report & Database Updated', stageKey: 'REPORT', icon: CheckCircle2 },
-  ];
-
-  const getStepStatus = (index: number) => {
-    if (isRunning) {
-      if (progressPercent >= (index + 1) * 20) return 'completed';
-      if (progressPercent >= index * 20) return 'active';
-      return 'pending';
-    }
-    return 'completed';
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
@@ -116,63 +83,7 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
           </div>
         </div>
 
-        <div className="p-6 space-y-6 overflow-y-auto flex-1">
-          {/* Progress Bar Section */}
-          <div className="space-y-2">
-            <div className="flex justify-between items-center text-xs font-semibold">
-              <span className="text-slate-700 flex items-center">
-                {isRunning && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin text-emerald-600" />}
-                {currentStageText}
-              </span>
-              <span className="text-emerald-600">{progressPercent}%</span>
-            </div>
-            <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden border border-slate-200/60">
-              <div
-                className="bg-emerald-500 h-full transition-all duration-500 ease-out"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Pipeline Steps Checklist */}
-          <div className="grid grid-cols-1 gap-2.5 bg-slate-50 p-4 rounded-xl border border-slate-200/80">
-            {steps.map((step, idx) => {
-              const status = getStepStatus(idx);
-              const StepIcon = step.icon;
-              return (
-                <div key={idx} className="flex items-center justify-between text-xs">
-                  <div className="flex items-center space-x-2.5">
-                    <div
-                      className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                        status === 'completed'
-                          ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
-                          : status === 'active'
-                          ? 'bg-emerald-600 text-white animate-pulse'
-                          : 'bg-slate-200 text-slate-500'
-                      }`}
-                    >
-                      {status === 'completed' ? <CheckCircle2 className="w-3.5 h-3.5" /> : idx + 1}
-                    </div>
-                    <span className={`font-medium ${status === 'pending' ? 'text-slate-400' : 'text-slate-800'}`}>
-                      {step.label}
-                    </span>
-                  </div>
-                  <div>
-                    {status === 'active' && (
-                      <span className="text-[11px] font-semibold text-emerald-600 flex items-center">
-                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                        In Progress
-                      </span>
-                    )}
-                    {status === 'completed' && (
-                      <span className="text-[11px] font-semibold text-emerald-700">Done</span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
+        <div className="p-6 space-y-5 overflow-y-auto flex-1">
           {/* Scan Results Metrics (if completed) */}
           {!isRunning && scanResult && (
             <div className="bg-emerald-50 border border-emerald-200/80 rounded-xl p-4 text-xs space-y-3">
@@ -216,15 +127,22 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
             </button>
 
             {showLogs && (
-              <div className="bg-slate-950 p-3 max-h-48 overflow-y-auto text-[11px] font-mono space-y-1.5 text-slate-300">
+              <div className="bg-slate-950 p-3 max-h-56 overflow-y-auto text-[11px] font-mono space-y-2 text-slate-300">
                 {logs.length === 0 ? (
                   <div className="text-slate-500 italic">No execution logs recorded yet.</div>
                 ) : (
                   logs.map((log) => (
-                    <div key={log.id} className="flex space-x-2 leading-relaxed">
-                      <span className="text-slate-500 select-none">[{log.timestamp}]</span>
-                      <span className="text-emerald-400 font-semibold">[{log.stage}]</span>
-                      <span className="text-slate-200">{log.message}</span>
+                    <div key={log.id} className="space-y-0.5 leading-relaxed border-b border-slate-900/60 pb-1.5 last:border-0 last:pb-0">
+                      <div className="flex space-x-2">
+                        <span className="text-slate-500 select-none">[{log.timestamp}]</span>
+                        <span className="text-emerald-400 font-semibold shrink-0">[{log.stage}]</span>
+                        <div className="text-slate-200">{renderFormattedText(log.message)}</div>
+                      </div>
+                      {log.details && (
+                        <div className="ml-16 pl-2 border-l border-slate-800 text-slate-400 text-[10px] whitespace-pre-wrap">
+                          {renderFormattedText(log.details)}
+                        </div>
+                      )}
                     </div>
                   ))
                 )}

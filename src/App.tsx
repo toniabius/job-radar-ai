@@ -7,12 +7,13 @@ import { ConfigEditor } from './components/ConfigEditor';
 import { ReportView } from './components/ReportView';
 import { AddJobModal } from './components/AddJobModal';
 import { ScanProgressModal } from './components/ScanProgressModal';
+import { ScanLogsView } from './components/ScanLogsView';
 import { Job, AppConfig, ResumeData, UserProfile, PipelineLog } from './types';
 import { Search, Sparkles, Filter, ArrowUpDown, Building, DollarSign, MapPin, X, Clock, User } from 'lucide-react';
 import { parseLocationGroup, parseMinSalary } from './utils/location';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'database' | 'config' | 'report'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'database' | 'config' | 'report' | 'logs'>('dashboard');
   
   // App state
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -120,6 +121,51 @@ export default function App() {
     }
   };
 
+  const fetchPipelineLogs = async () => {
+    try {
+      const res = await fetch('/api/pipeline/logs');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.logs) {
+          setPipelineLogs(data.logs);
+        }
+        if (data.isRunning !== undefined) {
+          setIsRunningPipeline(data.isRunning);
+        }
+        if (data.result) {
+          setLastScanResult(data.result);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching pipeline logs:', err);
+    }
+  };
+
+  const handleClearPipelineLogs = async () => {
+    try {
+      const res = await fetch('/api/pipeline/logs', { method: 'DELETE' });
+      if (res.ok) {
+        setPipelineLogs([]);
+        setLastScanResult(null);
+      }
+    } catch (err) {
+      console.error('Error clearing pipeline logs:', err);
+    }
+  };
+
+  // Poll real-time logs ONLY when scan/evaluation is actively in progress
+  useEffect(() => {
+    fetchPipelineLogs();
+  }, []);
+
+  useEffect(() => {
+    if (!isRunningPipeline) return;
+    const interval = setInterval(() => {
+      fetchPipelineLogs();
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isRunningPipeline]);
+
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Cancel Scan Pipeline
@@ -142,6 +188,7 @@ export default function App() {
   const handleRunPipeline = async () => {
     setIsScanModalOpen(true);
     setIsRunningPipeline(true);
+    setPipelineLogs([]); // Clear logs from UI for fresh scan run
     setLastScanResult(null);
 
     const controller = new AbortController();
@@ -157,6 +204,7 @@ export default function App() {
       if (data.cancelled || !data.success) {
         setIsRunningPipeline(false);
         setLastScanResult(null);
+        await fetchPipelineLogs();
         return;
       }
 
@@ -167,17 +215,20 @@ export default function App() {
         newJobsCount: data.newJobsCount,
         evaluatedCount: data.evaluatedCount,
         totalJobs: data.totalJobs,
+        totalScanned: data.totalScanned,
         summary: data.summary,
       });
       setLastRunTime(new Date().toLocaleTimeString());
       await fetchJobs();
       await fetchReport();
+      await fetchPipelineLogs();
     } catch (err: any) {
       if (err.name === 'AbortError') {
         console.log('Scan pipeline aborted by user.');
       } else {
         console.error('Pipeline error:', err);
       }
+      await fetchPipelineLogs();
     } finally {
       setIsRunningPipeline(false);
       abortControllerRef.current = null;
@@ -788,6 +839,17 @@ export default function App() {
             onEvaluateAllJobs={handleEvaluateAllJobs}
             evaluatingJobId={evaluatingJobId}
             isBulkEvaluating={isBulkEvaluating}
+          />
+        )}
+
+        {/* REAL-TIME PIPELINE SCAN LOGS VIEW */}
+        {activeTab === 'logs' && (
+          <ScanLogsView
+            logs={pipelineLogs}
+            isRunning={isRunningPipeline}
+            onRefresh={fetchPipelineLogs}
+            onClear={handleClearPipelineLogs}
+            onRunScan={handleRunPipeline}
           />
         )}
 
