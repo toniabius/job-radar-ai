@@ -557,7 +557,7 @@ function parseResumeDetails(content: string, configSkills?: string[]): ResumeDat
 
 /**
  * Async version: parses resume then enriches parsedSkills via Gemini.
- * Use this on write paths (resume save / upload).
+ * Use this on write paths (resume upload).
  */
 async function parseResumeDetailsEnriched(content: string, configSkills?: string[]): Promise<ResumeData> {
   const base = parseResumeDetails(content, configSkills);
@@ -581,12 +581,33 @@ function loadResume(): ResumeData {
   return loadResumeRaw(config.skills);
 }
 
-async function saveResume(content: string): Promise<ResumeData> {
+async function saveResume(content: string, enrichSkillsWithAi: boolean = false): Promise<ResumeData> {
   writeFileIfChanged(RESUME_PATH, content);
   const config = loadConfig();
-  const resume = await parseResumeDetailsEnriched(content, config.skills);
 
-  // Sync to profiles.json active profile
+  // Try to preserve existing parsedSkills if we are not re-enriching via AI
+  let existingSkills: string[] | undefined;
+  try {
+    if (fs.existsSync(PROFILES_JSON_PATH)) {
+      const store: ProfilesStore = JSON.parse(fs.readFileSync(PROFILES_JSON_PATH, "utf-8"));
+      const active = store.profiles.find((p) => p.id === store.activeProfileId);
+      if (active?.resume?.parsedSkills?.length) {
+        existingSkills = active.resume.parsedSkills;
+      }
+    }
+  } catch (err) {
+    // fallback
+  }
+
+  const resume = enrichSkillsWithAi
+    ? await parseResumeDetailsEnriched(content, config.skills)
+    : parseResumeDetails(content, config.skills);
+
+  if (!enrichSkillsWithAi && existingSkills && existingSkills.length > 0) {
+    resume.parsedSkills = existingSkills;
+  }
+
+  // Sync to profiles.json active profile (updating ONLY active.resume)
   try {
     if (fs.existsSync(PROFILES_JSON_PATH)) {
       const store: ProfilesStore = JSON.parse(fs.readFileSync(PROFILES_JSON_PATH, "utf-8"));
@@ -2121,28 +2142,35 @@ app.put("/api/profiles/:id", async (req, res) => {
   if (newConfig) {
     existing.config = newConfig;
   }
+
   if (resumeContent !== undefined) {
-    existing.resume = await parseResumeDetailsEnriched(resumeContent, existing.config.skills);
-  }
-  if (Array.isArray(parsedSkills)) {
+    const expInfo = extractExperienceInfo(resumeContent);
+    const skillsToUse = Array.isArray(parsedSkills) && parsedSkills.length > 0
+      ? parsedSkills
+      : (existing.resume?.parsedSkills?.length
+        ? existing.resume.parsedSkills
+        : extractSkillsRegex(resumeContent, existing.config?.skills));
+
+    existing.resume = {
+      title: "Resume",
+      lastUpdated: new Date().toISOString().split("T")[0],
+      content: resumeContent,
+      parsedSkills: skillsToUse,
+      experienceYears: expInfo.experienceYears,
+    };
+  } else if (Array.isArray(parsedSkills) && existing.resume) {
     existing.resume.parsedSkills = parsedSkills;
   }
-  existing.updatedAt = new Date().toISOString();
 
+  existing.updatedAt = new Date().toISOString();
   store.profiles[index] = existing;
   saveProfilesData(store);
 
-  // If this is the active profile, sync to files
+  // If this is the active profile, sync config and resume to files
   if (id === store.activeProfileId) {
     if (newConfig) saveConfig(newConfig);
-    if (resumeContent !== undefined) await saveResume(resumeContent);
-    if (Array.isArray(parsedSkills)) {
-      const reStore = loadProfilesData();
-      const activeP = reStore.profiles.find((p) => p.id === id);
-      if (activeP) {
-        activeP.resume.parsedSkills = parsedSkills;
-        saveProfilesData(reStore);
-      }
+    if (resumeContent !== undefined) {
+      writeFileIfChanged(RESUME_PATH, resumeContent);
     }
   }
 

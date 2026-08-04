@@ -229,6 +229,9 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
         const data = await res.json();
         if (data.success && data.extractedMarkdown) {
           setResumeContent(data.extractedMarkdown);
+          if (data.resume?.parsedSkills && Array.isArray(data.resume.parsedSkills)) {
+            setLocalParsedSkills(data.resume.parsedSkills);
+          }
           onSaveResume(data.extractedMarkdown);
           setPdfUploadMessage(`✅ Successfully extracted & saved "${file.name}" to candidate profile!`);
           setTimeout(() => {
