@@ -603,28 +603,32 @@ async function saveResume(content: string): Promise<ResumeData> {
 function loadJobsDB(profileId?: string): Job[] {
   const pid = profileId || getActiveProfileId();
   const profilePath = getProfileJobsPath(pid);
+  const config = loadConfig();
 
+  let jobs: Job[] = [];
   try {
     if (fs.existsSync(profilePath)) {
-      return JSON.parse(fs.readFileSync(profilePath, "utf-8"));
-    }
-    // Fallback: If default profile and main JOBS_DB_PATH exists, load it
-    if (pid === "default" && fs.existsSync(JOBS_DB_PATH)) {
-      const legacyJobs = JSON.parse(fs.readFileSync(JOBS_DB_PATH, "utf-8"));
-      writeFileIfChanged(profilePath, JSON.stringify(legacyJobs, null, 2));
-      return legacyJobs;
+      jobs = JSON.parse(fs.readFileSync(profilePath, "utf-8"));
+    } else if (pid === "default" && fs.existsSync(JOBS_DB_PATH)) {
+      jobs = JSON.parse(fs.readFileSync(JOBS_DB_PATH, "utf-8"));
+      writeFileIfChanged(profilePath, JSON.stringify(jobs, null, 2));
+    } else {
+      jobs = pid === "default" ? SAMPLE_JOBS : [];
+      writeFileIfChanged(profilePath, JSON.stringify(jobs, null, 2));
+      if (pid === getActiveProfileId()) {
+        writeFileIfChanged(JOBS_DB_PATH, JSON.stringify(jobs, null, 2));
+      }
     }
   } catch (err) {
     console.error(`Error reading jobs database for profile ${pid}:`, err);
+    jobs = pid === "default" ? SAMPLE_JOBS : [];
   }
 
-  // Fallback to sample jobs for default profile, or empty array
-  const initialJobs = pid === "default" ? SAMPLE_JOBS : [];
-  writeFileIfChanged(profilePath, JSON.stringify(initialJobs, null, 2));
-  if (pid === getActiveProfileId()) {
-    writeFileIfChanged(JOBS_DB_PATH, JSON.stringify(initialJobs, null, 2));
+  // Sanitize loaded jobs against active profile locations
+  if (config.locations && config.locations.length > 0) {
+    return jobs.map((j) => sanitizeJobEvaluation(j, config.locations));
   }
-  return initialJobs;
+  return jobs;
 }
 
 function isLocationMatch(jobLoc: string, preferredLocations: string[]): boolean {
@@ -651,11 +655,11 @@ function isLocationMatch(jobLoc: string, preferredLocations: string[]): boolean 
   }
 
   const locationAliases: Record<string, string[]> = {
-    california: ["ca", "california", "san francisco", "santa clara", "los gatos", "los angeles", "san jose", "sunnyvale", "cupertino", "bay area", "fremont", "palo alto", "mountain view"],
-    washington: ["wa", "washington", "seattle", "redmond", "bellevue", "kirkland"],
+    california: ["ca", "california", "california state", "san francisco", "santa clara", "los gatos", "los angeles", "san jose", "sunnyvale", "cupertino", "bay area", "fremont", "palo alto", "mountain view"],
+    washington: ["wa", "washington", "washington state", "seattle", "redmond", "bellevue", "kirkland"],
     virginia: ["va", "virginia", "mclean", "reston", "arlington", "herndon", "tysons"],
     maryland: ["md", "maryland", "bethesda", "baltimore", "rockville"],
-    "washington dc": ["dc", "washington dc", "district of columbia"],
+    "washington dc": ["dc", "washington dc", "washington d.c.", "washington, dc", "washington, d.c.", "district of columbia"],
     texas: ["tx", "texas", "austin", "dallas", "houston", "san antonio", "plano", "irving"],
     "new york": ["ny", "new york", "nyc", "manhattan", "brooklyn"],
     massachusetts: ["ma", "massachusetts", "boston", "cambridge"],
@@ -713,6 +717,73 @@ function isLocationMatch(jobLoc: string, preferredLocations: string[]): boolean 
   }
 
   return false;
+}
+
+function sanitizeJobEvaluation(job: Job, preferredLocations: string[]): Job {
+  if (!job || !preferredLocations || preferredLocations.length === 0) return job;
+  const isLocMatch = isLocationMatch(job.location, preferredLocations);
+  if (!isLocMatch) return job;
+
+  const locMismatchPattern = /location mismatch|prefers.*washington dc|role is (in|based in).*wa|candidate's current location and preference mismatch|geographic distance|conflicts with the candidate's preference/i;
+
+  let cleanedReasons = job.reasons;
+  if (Array.isArray(cleanedReasons)) {
+    cleanedReasons = cleanedReasons.filter((r) => !locMismatchPattern.test(r));
+  }
+
+  let cleanedMissing = job.missing_skills;
+  if (Array.isArray(cleanedMissing)) {
+    cleanedMissing = cleanedMissing.filter((m) => !locMismatchPattern.test(m));
+  }
+
+  let cleanedSummary = job.summary;
+  if (cleanedSummary) {
+    const sentences = cleanedSummary.split(/(?<=[.!?])\s+/);
+    const validSentences = sentences.filter((s) => {
+      const lower = s.toLowerCase();
+      if (
+        (lower.includes("bellevue") || lower.includes("seattle") || lower.includes("washington dc") || lower.includes("location") || lower.includes("geographic")) &&
+        (lower.includes("conflict") || lower.includes("mismatch") || lower.includes("distance") || lower.includes("prefers") || lower.includes("impacts"))
+      ) {
+        return false;
+      }
+      if (lower.includes("location mismatch")) return false;
+      return true;
+    });
+    cleanedSummary = validSentences.join(" ").trim();
+    if (!cleanedSummary && job.title && job.company) {
+      cleanedSummary = `${job.title} at ${job.company} (${job.location}) aligns well with candidate profile and target requirements.`;
+    }
+  }
+
+  let newScore = job.score;
+  let newMatchLevel: 'Strong Match' | 'Good Match' | 'Weak Match' | 'Unmatched' | undefined = job.match_level;
+
+  if (newScore !== undefined && newScore < 80) {
+    const hasHardBlocker =
+      cleanedMissing?.some((m) => m.toLowerCase().includes("hard blocker")) ||
+      cleanedReasons?.some((r) => r.toLowerCase().includes("hard blocker"));
+    const hasYoeGap =
+      cleanedMissing?.some((m) => m.toLowerCase().includes("experience gap") || m.toLowerCase().includes("yoe")) ||
+      cleanedReasons?.some((r) => r.toLowerCase().includes("experience gap"));
+    const hasOverQual =
+      cleanedMissing?.some((m) => m.toLowerCase().includes("over-qualification")) ||
+      cleanedReasons?.some((r) => r.toLowerCase().includes("over-qualification"));
+
+    if (!hasHardBlocker && !hasYoeGap && !hasOverQual) {
+      newScore = 85;
+      newMatchLevel = "Strong Match";
+    }
+  }
+
+  return {
+    ...job,
+    score: newScore,
+    match_level: newMatchLevel,
+    summary: cleanedSummary,
+    reasons: cleanedReasons,
+    missing_skills: cleanedMissing,
+  };
 }
 
 let activePipelineCancelled = false;
@@ -1040,14 +1111,7 @@ async function fetchLiveLinkedInJobs(
                       .trim();
                   }
                   
-                  const salaryMatch =
-                    jobPageHtml.match(/range\s+for\s+this\s+role\s+is\s+([\$€£][\d,.]+\s*[-–]\s*[\$€£]?[\d,.]+(?:\s*(?:USD|EUR|GBP))?)/i)
-                    || jobPageHtml.match(/salary\s+range[^<]{0,60}?([\$€£][\d,.]+\s*[-–]\s*[\$€£]?[\d,.]+)(?:\s*(?:USD|EUR|GBP))?/i)
-                    || jobPageHtml.match(/compensation[^<]{0,120}?([\$€£][\d,.]+(?:\s*[-–]\s*[\$€£]?[\d,.]+)?(?:\s*[KkMm])?(?:\s*(?:USD|EUR|GBP))?)/i)
-                    || jobPageHtml.match(/([\$€£][\d,.]+(?:\s*[-–]\s*[\$€£]?[\d,.]+)?\s*(?:USD|EUR|GBP)?)\s*(?:per\s+year|\/yr|annual)/i);
-                  if (salaryMatch) {
-                    foundSalary = salaryMatch[1].trim();
-                  }
+                  foundSalary = await determineJobSalary(jobPageHtml || fullDescription, card.jobTitle, card.rawComp);
                 }
               } catch (fetchErr) {
                 console.error(`[JD FETCH] Exception fetching job description for ${card.jobId}:`, fetchErr);
@@ -1062,7 +1126,7 @@ async function fetchLiveLinkedInJobs(
                 posted_time: card.postedTime,
                 employment_type: "Full-time",
                 department: "Engineering",
-                salary: foundSalary ? normalizeSalary(foundSalary) : normalizeSalary("$150,000 - $280,000 USD"),
+                salary: foundSalary || "$Not found",
                 provider: "LinkedIn",
                 first_seen: new Date().toISOString(),
                 status: "new"
@@ -1098,37 +1162,200 @@ function extractRequiredYoe(text: string): number {
   return 0;
 }
 
-/**
- * Normalise a raw salary string to a consistent "$X - $Y" format.
- * - Strips trailing ".00" decimals from each number
- * - Ensures the leading "$" is present on both sides of a range
- * - Removes trailing currency codes (USD / EUR / GBP) and trailing punctuation
- * Examples:
- *   "$388,000.00 - $558,000.00." → "$388,000 - $558,000"
- *   "$150,000 - $280,000 USD"   → "$150,000 - $280,000"
- *   "€80,000"                   → "€80,000"
- */
-function normalizeSalary(raw: string): string {
-  // Strip trailing punctuation / currency codes / whitespace
-  let s = raw.replace(/\s*(USD|EUR|GBP)\s*$/i, "").replace(/[.,;]+$/, "").trim();
+function formatSingleAmount(token: string, isHourly: boolean = false): string {
+  if (!token) return "";
+  const cleaned = token
+    .replace(/[\$€£,]/g, "")
+    .replace(/\s*(USD|EUR|GBP|\/yr|\/year|\/hr|\/hour|per\s+year|per\s+hour|annual|annually|hourly)\s*$/i, "")
+    .trim();
 
-  // Helper: format a single dollar token — strip .00-style decimals, keep symbol
-  const formatAmount = (token: string): string =>
-    token.replace(/(\d)\.\d{2}(?=\b|,|$)/g, "$1").trim();
-
-  // Split on the separator (en-dash, em-dash, or hyphen, with optional spaces)
-  const separatorMatch = s.match(/^([\$€£][\d,.]+)\s*[-–—]\s*([\$€£]?[\d,.]+)$/);
-  if (separatorMatch) {
-    const symbol = separatorMatch[1].match(/^[\$€£]/)?.[0] ?? "$";
-    const lo = formatAmount(separatorMatch[1]);
-    // Re-attach symbol to the high end if it was stripped
-    const hiRaw = separatorMatch[2].match(/^[\$€£]/) ? separatorMatch[2] : symbol + separatorMatch[2];
-    const hi = formatAmount(hiRaw);
-    return `${lo} - ${hi}`;
+  // Check if token ends with K / k / M / m
+  const kMatch = cleaned.match(/^(\d+(?:\.\d+)?)\s*k$/i);
+  if (kMatch) {
+    const num = Math.round(parseFloat(kMatch[1]) * 1000);
+    return `$${num.toLocaleString("en-US")}`;
   }
 
-  // Single value — just clean up decimals
-  return formatAmount(s);
+  const mMatch = cleaned.match(/^(\d+(?:\.\d+)?)\s*m$/i);
+  if (mMatch) {
+    const num = Math.round(parseFloat(mMatch[1]) * 1000000);
+    return `$${num.toLocaleString("en-US")}`;
+  }
+
+  const numVal = parseFloat(cleaned);
+  if (isNaN(numVal)) return token.trim();
+
+  if (isHourly) {
+    return `$${numVal % 1 === 0 ? numVal : numVal.toFixed(2)}`;
+  }
+
+  if (numVal >= 30 && numVal < 1000 && Number.isInteger(numVal) && !cleaned.includes(".")) {
+    const num = numVal * 1000;
+    return `$${num.toLocaleString("en-US")}`;
+  }
+
+  if (numVal >= 1000) {
+    const num = Math.round(numVal);
+    return `$${num.toLocaleString("en-US")}`;
+  }
+
+  return `$${Math.round(numVal)}`;
+}
+
+/**
+ * Normalise a raw salary string to a consistent "$X - $Y" format.
+ * - Converts abbreviated "175K - 280K" or "$175k-$280k" to "$175,000 - $280,000"
+ * - Returns "$Not found" if no salary was disclosed
+ */
+function normalizeSalary(raw: string): string {
+  if (!raw || !raw.trim()) return "$Not found";
+  let s = raw.trim();
+
+  if (s.toLowerCase().includes("not found")) {
+    return "$Not found";
+  }
+
+  const isHourly = /\b(?:hr|hour|hourly|\/hr)\b/i.test(s);
+  s = s.replace(/\s*(USD|EUR|GBP)\s*$/i, "").replace(/[.,;]+$/, "").trim();
+
+  const parts = s.split(/\s*(?:[-–—]|\bto\b)\s*/i);
+
+  let result = "";
+  if (parts.length === 2) {
+    const lowFormatted = formatSingleAmount(parts[0], isHourly);
+    const highFormatted = formatSingleAmount(parts[1], isHourly);
+
+    if (lowFormatted && highFormatted) {
+      result = `${lowFormatted} - ${highFormatted}`;
+    }
+  } else if (parts.length === 1) {
+    const single = formatSingleAmount(parts[0], isHourly);
+    if (single) result = single;
+  }
+
+  if (!result) return "$Not found";
+
+  if (isHourly && !result.toLowerCase().includes("hr") && !result.toLowerCase().includes("hour")) {
+    result += " / hr";
+  }
+
+  return result;
+}
+
+function extractSalaryWithRegex(textOrHtml: string): string {
+  if (!textOrHtml || !textOrHtml.trim()) return "$Not found";
+
+  const text = textOrHtml
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ")
+    .trim();
+
+  const contextMatch = text.match(/(?:salary|compensation|pay|rate|base)\s*(?:range|scale|is)?[^<]{0,100}?([\$€£]\s*\d[\d,.]*\s*[kKmM]?(?:\s*(?:[-–—]|to)\s*[\$€£]?\s*\d[\d,.]*\s*[kKmM]?)?)/i);
+  if (contextMatch && contextMatch[1]) {
+    const norm = normalizeSalary(contextMatch[1]);
+    if (norm && norm !== "$Not found") return norm;
+  }
+
+  const rangeMatch = text.match(/(?:[\$€£]|USD\s*[\$€£]?)\s*(\d[\d,.]*\s*[kKmM]?)\s*(?:[-–—]|to)\s*([\$€£]?\s*\d[\d,.]*\s*[kKmM]?)/i);
+  if (rangeMatch) {
+    const raw = `${rangeMatch[1]} - ${rangeMatch[2]}`;
+    const norm = normalizeSalary(raw);
+    if (norm && norm !== "$Not found") return norm;
+  }
+
+  const singleMatch = text.match(/([\$€£]\s*\d[\d,.]*\s*[kKmM]?)\s*(?:USD|EUR|GBP|\/yr|\/year|per\s+year|annual|annually)/i);
+  if (singleMatch && singleMatch[1]) {
+    const norm = normalizeSalary(singleMatch[1]);
+    if (norm && norm !== "$Not found") return norm;
+  }
+
+  return "$Not found";
+}
+
+async function extractSalaryWithAI(
+  jobDescriptionHtmlOrText: string,
+  jobTitle?: string,
+  company?: string
+): Promise<string | null> {
+  if (!jobDescriptionHtmlOrText || !jobDescriptionHtmlOrText.trim()) return null;
+  if (!hasValidApiKey()) return null;
+
+  const config = loadConfig();
+  const primaryModel = config.gemini_model || "gemini-3.1-flash-lite";
+  const candidateModels = [primaryModel, ...ALL_GEMINI_FALLBACK_MODELS].filter((m, i, arr) => arr.indexOf(m) === i);
+
+  const textSnippet = jobDescriptionHtmlOrText
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!/\d/.test(textSnippet)) return null;
+
+  const prompt = `You are an AI salary and compensation extraction engine for Job Radar AI.
+Extract the base salary range or pay rate explicitly mentioned in the job posting below.
+
+Job Title: ${jobTitle || "Job Role"}
+Company: ${company || "Company"}
+
+CRITICAL RULES:
+1. Return ONLY the extracted base salary range formatted as "$X - $Y" (e.g., "$175,000 - $280,000").
+2. Convert abbreviated ranges like "$175K - $280K", "$175k-$280k", "$175K to $280K", "$175,000/yr - $280,000/yr" to full dollar figures "$175,000 - $280,000".
+3. If a single annual salary figure is given (e.g. "$180,000"), return "$180,000".
+4. If hourly pay rate (e.g. "$80 - $120/hr"), return "$80 - $120 / hr".
+5. DO NOT MAKE UP OR GUESS A SALARY RANGE. If no salary, compensation range, or pay rate is explicitly disclosed in the job posting text, return "Not found".
+6. Return ONLY the raw result string (no explanations, no quotes, no markdown).
+
+Job Description:
+${textSnippet.slice(0, 8000)}`;
+
+  for (const model of candidateModels) {
+    try {
+      await enforceGeminiRateLimit(model);
+      const ai = getGeminiClient();
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+      });
+
+      const rawResult = (response.text || "").trim()
+        .replace(/^```[a-z]*\n?/i, "").replace(/```$/, "").trim()
+        .replace(/^["']|["']$/g, "").trim();
+
+      if (!rawResult || rawResult.toLowerCase().includes("not found")) {
+        return "$Not found";
+      }
+
+      const normalized = normalizeSalary(rawResult);
+      if (normalized && normalized !== "$Not found") {
+        return normalized;
+      }
+    } catch (err: any) {
+      console.warn(`[SALARY AI] Gemini (${model}) salary extraction failed or rate limited:`, err?.message || err);
+    }
+  }
+
+  return null;
+}
+
+async function determineJobSalary(
+  descriptionOrHtml: string,
+  title?: string,
+  company?: string
+): Promise<string> {
+  if (!descriptionOrHtml || !descriptionOrHtml.trim()) return "$Not found";
+
+  try {
+    const aiSalary = await extractSalaryWithAI(descriptionOrHtml, title, company);
+    if (aiSalary) {
+      return aiSalary;
+    }
+  } catch (err) {
+    console.warn("[SALARY] AI extraction error, falling back to regex match.");
+  }
+
+  return extractSalaryWithRegex(descriptionOrHtml);
 }
 
 function detectHardBlockerViolation(job: Job, hardBlockersText?: string): { isBlocked: boolean; reason: string } {
@@ -1453,7 +1680,11 @@ function generateMarkdownReport(jobs: Job[], profileId?: string): string {
   const config = loadConfig();
   const minThreshold = config.minimum_score || 65;
 
-  const evaluatedJobs = jobs.filter((j) => j.status === "evaluated" || j.score !== undefined);
+  const sanitizedJobs = config.locations && config.locations.length > 0
+    ? jobs.map((j) => sanitizeJobEvaluation(j, config.locations))
+    : jobs;
+
+  const evaluatedJobs = sanitizedJobs.filter((j) => j.status === "evaluated" || j.score !== undefined);
   const strongMatches = evaluatedJobs.filter((j) => (j.score || 0) >= 80);
   const goodMatches = evaluatedJobs.filter((j) => (j.score || 0) >= 60 && (j.score || 0) < 80);
   const weakMatches = evaluatedJobs.filter((j) => (j.score || 0) < 60);
@@ -1462,7 +1693,7 @@ function generateMarkdownReport(jobs: Job[], profileId?: string): string {
 
   let md = `# 🎯 Job Radar AI - Pipeline Evaluation Report\n\n`;
   md += `**Generated:** ${timestamp}\n`;
-  md += `**Minimum Score Threshold for Listing Links:** \`${minThreshold}%\`\n\n`;
+  md += `**Minimum Score Target:** \`${minThreshold}%\`\n\n`;
   md += `**Summary Metrics:**\n`;
   md += `- **Total Jobs Scanned:** ${jobs.length}\n`;
   md += `- **Evaluated Jobs:** ${evaluatedJobs.length}\n`;
@@ -1479,18 +1710,13 @@ function generateMarkdownReport(jobs: Job[], profileId?: string): string {
     }
     list.forEach((job, idx) => {
       const score = job.score || 0;
-      const meetsThreshold = score >= minThreshold;
 
       sectionMd += `### ${idx + 1}. ${job.title} @ **${job.company}**\n`;
       sectionMd += `- **Match Score:** \`${score}/100\` (${job.match_level})\n`;
       sectionMd += `- **Location:** ${job.location}\n`;
+      sectionMd += `- **Disclosed Salary:** ${job.salary || '$Not found'}\n`;
       sectionMd += `- **Posted:** ${job.posted_time} | **ATS Provider:** ${job.provider}\n`;
-
-      if (meetsThreshold) {
-        sectionMd += `- **Listing Link:** [🔗 View Job Posting](${job.url})\n\n`;
-      } else {
-        sectionMd += `- **Listing Link:** *(Omitted — match score ${score}% is below threshold of ${minThreshold}%)*\n\n`;
-      }
+      sectionMd += `- **Listing Link:** [🔗 View Job Posting](${job.url})\n\n`;
 
       if (job.summary) {
         sectionMd += `**AI Match Summary:**\n> ${job.summary}\n\n`;
@@ -1795,7 +2021,10 @@ app.get("/api/config", (req, res) => {
 app.post("/api/config", (req, res) => {
   const config = req.body as AppConfig;
   saveConfig(config);
-  res.json({ success: true, config });
+  const sanitizedJobs = loadJobsDB();
+  saveJobsDB(sanitizedJobs);
+  generateMarkdownReport(sanitizedJobs);
+  res.json({ success: true, config, jobs: sanitizedJobs });
 });
 
 // 2. Resume Endpoints
@@ -1995,6 +2224,11 @@ async function evaluateJobWithGemini(
   recommended_actions: string[];
   model_used: string;
 }> {
+  if (!job.salary || job.salary === "$Not found" || job.salary.includes("USD")) {
+    const freshSalary = await determineJobSalary(job.description, job.title, job.company);
+    if (freshSalary) job.salary = freshSalary;
+  }
+
   if (!hasValidApiKey()) {
     const resumeParsed = parseResumeDetails(resumeContent, configObj.skills);
     const heur = generateHeuristicEvaluation(
@@ -2020,8 +2254,8 @@ ${resumeContent}
 === TARGET SALARY ===
 ${configObj.min_salary || 200000} ${configObj.salary_currency || 'USD'} (Includes postings where disclosed salary range reaches or exceeds target)
 
-=== PREFERRED LOCATIONS ===
-${configObj.locations && configObj.locations.length > 0 ? configObj.locations.join(", ") : "Any"}
+=== PREFERRED LOCATIONS (Candidate accepts roles in ANY of these independent regions) ===
+${configObj.locations && configObj.locations.length > 0 ? configObj.locations.map((loc, i) => `  ${i + 1}. "${loc}"`).join("\n") : "  - Any location"}
 
 === HARD BLOCKERS / CRITERIA TO AVOID ===
 ${configObj.hard_blockers && configObj.hard_blockers.trim() ? configObj.hard_blockers.trim() : "None specified."}
@@ -2064,7 +2298,13 @@ EVALUATION & SCORING RULES:
      * DO NOT award scores above 60 to experienced candidates for entry-level, new grad, or intern roles.
 
 2. SALARY & LOCATION ALIGNMENT:
-   - If job location (${job.location}) is outside preferred locations (${configObj.locations ? configObj.locations.join(", ") : "Any"}), deduct 20-25 points and note the location mismatch.
+   - CRITICAL LOCATION MATCHING & DISAMBIGUATION RULES:
+     * "Washington" or "WA" or "Washington State" refers to Washington State (includes Seattle, Bellevue, Redmond, Kirkland, etc.).
+     * "Washington DC" or "Washington, DC" or "D.C." or "DC" refers to Washington D.C. / District of Columbia.
+     * "Seattle, WA" or any city in Washington State IS A PERFECT LOCATION MATCH for "Washington" / "WA" / "Washington State".
+     * If the candidate's preferred locations list includes MULTIPLE locations (e.g. BOTH "Washington" AND "Washington DC"), it means they are open to roles in ANY of those regions.
+     * You MUST NOT claim a location mismatch (e.g., "Candidate prefers Washington DC area; role is based in Seattle, WA") if "Washington", "WA", "Seattle", or "Washington State" is listed among the preferred locations!
+     * ONLY deduct points for location if the job location (${job.location}) does NOT match ANY of the candidate's preferred locations or regions (${configObj.locations ? configObj.locations.join(", ") : "Any"}).
    - If disclosed salary is below minimum target (${configObj.min_salary || 200000}), note the salary gap.
 
 3. TECHNICAL & SKILLS ALIGNMENT:
@@ -2135,8 +2375,19 @@ Return JSON object matching schema:
           }
         }
 
+        // Apply full location & data sanitization
+        const sanitized = sanitizeJobEvaluation(
+          { ...job, ...resObj },
+          configObj.locations
+        );
+
         return {
-          ...resObj,
+          score: sanitized.score || 0,
+          match_level: sanitized.match_level || 'Good Match',
+          summary: sanitized.summary || '',
+          reasons: sanitized.reasons || [],
+          missing_skills: sanitized.missing_skills || [],
+          recommended_actions: sanitized.recommended_actions || resObj.recommended_actions || [],
           model_used: selectedModel,
         };
       }
@@ -2666,17 +2917,8 @@ app.delete("/api/reports/:filename", (req, res) => {
 app.get("/api/report", (req, res) => {
   try {
     const pid = getActiveProfileId();
-    const profileReportPath = getProfileReportPath(pid);
-    let md = "";
-
-    if (fs.existsSync(profileReportPath)) {
-      md = fs.readFileSync(profileReportPath, "utf-8");
-    } else if (fs.existsSync(REPORT_PATH)) {
-      md = fs.readFileSync(REPORT_PATH, "utf-8");
-    } else {
-      const jobs = loadJobsDB(pid);
-      md = generateMarkdownReport(jobs, pid);
-    }
+    const jobs = loadJobsDB(pid);
+    const md = generateMarkdownReport(jobs, pid);
     res.json({ content: md, path: `output/profiles/${pid}/report.md` });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

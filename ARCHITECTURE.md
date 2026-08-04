@@ -36,13 +36,13 @@ Job Radar AI uses a **Full-Stack Monolithic Architecture** combining a **React 1
 +---------------+--------------------------------|------------------+
                 |                                |
                 v                                v
-+-------------------------------+  +--------------------------------+
-|     LOCAL PERSISTENCE STORE   |  |     GOOGLE GEMINI AI API       |
-|  - database/jobs.db.json      |  | - gemini-2.5-flash-lite / pro  |
-|  - config/config.json         |  | - Candidate Fit Evaluation     |
-|  - output/report.md           |  | - Skill Gap Analysis           |
-|  - resume/resume.md           |  +--------------------------------+
-+-------------------------------+
++-------------------------------+  +------------------------------------+
+|     LOCAL PERSISTENCE STORE   |  |     GOOGLE GEMINI AI API           |
+|  - database/jobs.db.json      |  | - gemini-3.1-flash-lite / 2.5-lite |
+|  - config/config.json         |  | - Candidate Fit Evaluation         |
+|  - output/report.md           |  | - Skill Gap Analysis               |
+|  - resume/resume.md           |  | - AI Salary Range Extraction       |
++-------------------------------+  +------------------------------------+
 ```
 
 ---
@@ -63,12 +63,16 @@ Job Radar AI uses a **Full-Stack Monolithic Architecture** combining a **React 1
 
 ---
 
-## 🤖 Hybrid Match Evaluation Engine (Gemini AI + ATS Heuristic Fallback)
+## 🤖 Hybrid Match Evaluation & AI Salary Extraction Engine
 
-To ensure zero downtime and robust candidate evaluation under all key configurations:
-1. **Primary Evaluation Mode**: Uses `@google/genai` with `gemini-2.5-flash` or `gemini-2.5-flash-lite` to perform structured prompt evaluation comparing job requirements against `resume.md` and candidate detected skills (`parsedSkills`).
-2. **Resilient Fallback Mode**: If `GEMINI_API_KEY` is not configured or returns an authentication error (e.g., `API_KEY_INVALID`), the backend automatically flags `isApiKeyKnownInvalid` and redirects evaluation to a deterministic **ATS Heuristic Scoring Engine**.
-3. **ATS Heuristic Algorithm**: Calculates term overlap between candidate resume skills/experience (including user-customized `parsedSkills`) and job title/description, generating deterministic fit scores (0-100%), matching reason lists, missing skill identification, and actionable cover letter guidance.
+To ensure high accuracy, zero downtime, and robust job analysis:
+1. **Primary Evaluation Engine**: Powered by `@google/genai` using `gemini-3.1-flash-lite` with cascading fallbacks (`gemini-2.5-flash-lite`, `gemini-2.5-flash`) and sliding-window rate limit throttling (`enforceGeminiRateLimit`). Performs structured prompt evaluation comparing job requirements against `resume.md` and candidate detected skills (`parsedSkills`).
+2. **AI Salary & Compensation Extraction Engine**:
+   - `determineJobSalary` executes during job discovery and AI evaluation routines to scan raw job descriptions or page HTML for explicit base salary ranges or hourly rates using Gemini models and regex pattern matching.
+   - Converts raw compensation expressions (e.g., `$175K - $280K`, `$175k-$280k`, `$175,000/yr`) into standardized dollar ranges (`$175,000 - $280,000` or `$80 - $120 / hr`).
+   - If no compensation is explicitly disclosed, assigns `$Not found` without fabricating false data.
+3. **Resilient Fallback Mode**: If `GEMINI_API_KEY` is not configured or returns an authentication error (e.g., `API_KEY_INVALID`), the backend automatically flags `isApiKeyKnownInvalid` and redirects evaluation to a deterministic **ATS Heuristic Scoring Engine**.
+4. **ATS Heuristic Algorithm**: Calculates term overlap between candidate resume skills/experience (including user-customized `parsedSkills`) and job title/description, generating deterministic fit scores (0-100%), matching reason lists, missing skill identification, and actionable cover letter guidance.
 
 ---
 
