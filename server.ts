@@ -642,7 +642,7 @@ function isLocationMatch(jobLoc: string, preferredLocations: string[]): boolean 
   const isJobRemote = locLower.includes("remote") || locLower.includes("work from home") || locLower.includes("anywhere");
   const isJobHybrid = locLower.includes("hybrid");
   if (isJobRemote && prefLowerList.some((p) => p.includes("remote") || p.includes("anywhere"))) return true;
-  if (isJobHybrid && prefLowerList.some((p) => p.includes("hybrid") || p.includes("remote"))) return true;
+  if (isJobHybrid && prefLowerList.some((p) => p.includes("hybrid"))) return true;
 
   // Generic "United States" / "US" / "USA" — only pass through if the candidate
   // explicitly includes "United States" or "US" as a preferred location, or if
@@ -873,6 +873,11 @@ const KNOWN_GEO_LOCATIONS: Record<string, LocationGeoInfo> = {
   "seattle": { geoId: "104116203", locationStr: "Seattle, Washington, United States" },
   "seattle, wa": { geoId: "104116203", locationStr: "Seattle, Washington, United States" },
 
+  // Remote & Nationwide
+  "remote": { geoId: "103644278", locationStr: "United States" },
+  "work from home": { geoId: "103644278", locationStr: "United States" },
+  "telecommute": { geoId: "103644278", locationStr: "United States" },
+
   // United States
   "united states": { geoId: "103644278", locationStr: "United States" },
   "usa": { geoId: "103644278", locationStr: "United States" },
@@ -882,6 +887,11 @@ const KNOWN_GEO_LOCATIONS: Record<string, LocationGeoInfo> = {
 function getLinkedInLocationParams(locName: string): string {
   if (!locName || !locName.trim()) return "";
   const normalized = locName.trim().toLowerCase();
+
+  // If search target is explicitly Remote / Work From Home, pass LinkedIn's Remote filter f_WT=2
+  if (normalized === "remote" || normalized === "work from home" || normalized === "telecommute") {
+    return `&location=${encodeURIComponent("United States")}&geoId=103644278&f_WT=2`;
+  }
 
   const known = KNOWN_GEO_LOCATIONS[normalized];
   if (known) {
@@ -917,13 +927,13 @@ async function fetchLiveLinkedInJobs(
   const targetCompanies = companies.map((c) => c.name.trim()).filter(Boolean);
   const targetRoleList = roles.length > 0 ? roles : ["Software Engineer"];
 
-  // Filter out non-geographic pseudo-locations (Remote, Hybrid) for geographic location area searches
-  const isPseudoLocation = (loc: string) => {
+  // Filter out non-geographic Hybrid modalities (only Hybrid is ignored as an area search parameter; Remote is searched directly)
+  const isIgnoredLocation = (loc: string) => {
     const l = loc.trim().toLowerCase();
-    return l === "remote" || l === "hybrid" || l === "remote/hybrid" || l === "remote / hybrid" || l === "work from home" || l === "telecommute";
+    return l === "hybrid" || l === "remote/hybrid" || l === "remote / hybrid" || l === "hybrid remote";
   };
-  const geoLocations = preferredLocations.filter((loc) => !isPseudoLocation(loc));
-  const locationLoop = geoLocations.length > 0 ? geoLocations : [""];
+  const targetLocations = preferredLocations.filter((loc) => !isIgnoredLocation(loc));
+  const locationLoop = targetLocations.length > 0 ? targetLocations : [""];
 
   // Salary level filter for LinkedIn search URL (f_SB2)
   // f_SB2 values: 1=$40k+, 2=$60k+, 3=$80k+, 4=$100k+, 5=$120k+, 6=$140k+, 7=$160k+, 8=$180k+, 9=$200k+
@@ -937,7 +947,7 @@ async function fetchLiveLinkedInJobs(
 
   if (addLog) {
     const salaryDesc = sb2Level ? ` [Min Salary Filter: $${minSalary?.toLocaleString()}+ (f_SB2=${sb2Level})]` : "";
-    const ignoredLocs = preferredLocations.filter((loc) => isPseudoLocation(loc));
+    const ignoredLocs = preferredLocations.filter((loc) => isIgnoredLocation(loc));
     const ignoredDesc = ignoredLocs.length > 0 ? ` (Ignoring Work Modalities for area search: [${ignoredLocs.join(", ")}])` : "";
     addLog(
       "SCANNER",
