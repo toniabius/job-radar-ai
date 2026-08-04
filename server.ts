@@ -477,14 +477,18 @@ async function extractSkillsWithGemini(content: string, configSkills?: string[])
       await enforceGeminiRateLimit(model);
       const ai = getGeminiClient();
 
-      const prompt = `You are a technical resume parser. Extract every distinct technical skill, programming language, framework, library, tool, platform, and methodology mentioned in the resume below.
+      const prompt = `You are a senior technical recruiter and software engineer with deep knowledge of the tech industry. Your task is to extract a comprehensive list of technical skills from a candidate's resume.
+
+Extract every technical skill including: programming languages, frameworks, libraries, databases, cloud platforms, DevOps tools, AI/ML concepts, protocols, architectures, and methodologies.
 
 Rules:
 - Return ONLY a JSON array of strings, e.g. ["TypeScript", "React", "AWS"]
-- Each entry must be a specific skill name, properly capitalised (e.g. "TypeScript" not "typescript")
-- Do NOT include soft skills, job titles, company names, or vague terms like "problem solving"
-- De-duplicate — each skill appears once
-- Do NOT include any explanation or markdown formatting, just the raw JSON array
+- Use industry-standard casing for each skill (e.g. "TypeScript", "PostgreSQL", "CI/CD", "GraphQL", "LLMs", "RAG")
+- Include modern AI/ML terms where present: LLMs, RAG, fine-tuning, embeddings, vector databases, prompt engineering, etc.
+- Infer skills from context when clearly implied (e.g. "built REST APIs in Node.js" → include "REST API" and "Node.js")
+- DO NOT include soft skills, job titles, company names, or vague phrases like "problem solving" or "agile mindset"
+- De-duplicate — each skill appears exactly once
+- Return ONLY the raw JSON array with no explanation, commentary, or markdown formatting
 
 Resume:
 ${content.slice(0, 12000)}`;
@@ -1410,15 +1414,18 @@ ${textSnippet}`;
       })
       .join("\n\n---\n\n");
 
-    const prompt = `You are an AI salary and compensation extraction engine for Job Radar AI.
-Extract base salary ranges or pay rates explicitly mentioned in each of the ${chunkJobs.length} job postings below.
+    const prompt = `You are a compensation analyst specializing in tech industry job postings. Extract only explicitly stated base salary or pay rate information from each job posting below.
 
 CRITICAL RULES:
 1. Return ONLY a JSON array of objects, each containing "index" (number, 0 to ${chunkJobs.length - 1}) and "salary" (string).
-2. Format extracted annual base salary ranges as "$X - $Y" (e.g., "$175,000 - $280,000").
-3. Convert abbreviated ranges like "$175K - $280K", "$175k-$280k", "$175,000/yr" to full dollar figures "$175,000 - $280,000".
-4. If hourly pay rate (e.g. "$80 - $120/hr"), return "$80 - $120 / hr".
-5. DO NOT MAKE UP OR GUESS A SALARY RANGE. If no salary, compensation range, or pay rate is explicitly disclosed in the text for a job, return "Not found".
+2. Extract BASE SALARY ONLY. Ignore equity (RSUs, stock options), signing bonuses, OTE, or total compensation figures unless they are the only compensation figure provided.
+3. Format annual base salary ranges as "$X - $Y" (e.g., "$175,000 - $280,000").
+4. Convert abbreviated ranges: "$175K - $280K", "$175k-$280k", "$175,000/yr" → "$175,000 - $280,000".
+5. For hourly pay rates (e.g. "$80 - $120/hr"), return "$80 - $120 / hr".
+6. For single-value salaries (e.g. "up to $200,000"), return "$0 - $200,000".
+7. If the posting only mentions OTE or total comp with no explicit base breakdown, return "Not found".
+8. DO NOT INFER, ESTIMATE, OR GUESS any salary. Only extract figures explicitly stated in the text.
+9. If no salary or pay rate is disclosed for a job, return "Not found".
 
 Job Postings:
 ${promptJobsText}`;
@@ -2290,14 +2297,22 @@ app.post("/api/resume/parse-pdf", async (req, res) => {
     if (hasValidApiKey()) {
       try {
         const ai = getGeminiClient();
-        const userPrompt = `You are an expert ATS resume parser. Convert and format this candidate PDF resume document (${filename || 'resume.pdf'}) into clean, complete, beautifully structured Markdown text.
+        const userPrompt = `You are a world-class ATS (Applicant Tracking System) resume parser with expert knowledge of tech industry career progression. Convert the PDF resume document (${filename || 'resume.pdf'}) into clean, complete, and beautifully structured Markdown.
 
-CRITICAL INSTRUCTION FOR EXPERIENCE COMPUTATION:
-1. Carefully calculate the total years of professional work experience from the candidate's employment timeline.
-2. Explicitly place this line near the top of the resume under candidate contact/summary header:
-   **Total Professional Experience:** ~X Years (YYYY-Present)
-3. Include full candidate name, contact info, professional summary, work history with all bullet points, projects, education, and technical skills. Preserve all facts, technologies, dates, and metrics verbatim.
-4. Return ONLY raw Markdown content without code block backticks or metadata commentary.`;
+EXPERIENCE COMPUTATION (CRITICAL):
+1. Calculate total years of professional work experience by summing all employment periods, excluding education and internships unless they are the candidate's only experience.
+2. For overlapping roles (e.g. consulting while employed full-time), do not double-count time.
+3. Count contract, freelance, and consulting engagements as valid professional experience.
+4. Place this line near the top, under the candidate's contact info:
+   **Total Professional Experience:** ~X Years (YYYY–Present)
+
+FORMATTING INSTRUCTIONS:
+- Preserve all facts, technologies, dates, metrics, and bullet points verbatim — do not rephrase, summarize, or omit anything.
+- Use clear Markdown headers: # Name, ## Summary, ## Experience, ## Education, ## Skills, ## Projects (if present).
+- Under each role, format as: **Company** | **Title** | Dates | Location (if available), followed by bullet points.
+- Group skills by category if the resume does so (e.g. Languages, Frameworks, Cloud, Tools).
+- If the resume is in a language other than English, translate section headers to English but preserve the content as-is.
+- Return ONLY raw Markdown — no code block backticks, no preamble, no meta-commentary.`;
 
         const parts: any[] = extractedPdfText
           ? [{ text: `${userPrompt}\n\n=== RAW EXTRACTED RESUME TEXT ===\n${extractedPdfText}` }]
@@ -2475,7 +2490,7 @@ async function batchEvaluateJobsWithGemini(
   for (let i = 0; i < jobsList.length; i += BATCH_SIZE) {
     const chunk = jobsList.slice(i, i + BATCH_SIZE);
 
-    const chunkPrompt = `You are the AI Matcher engine in Job Radar AI. Evaluate the following ${chunk.length} job posting(s) against the candidate's resume and return structured match evaluations for EACH job.
+    const chunkPrompt = `You are an expert AI job-candidate matching engine for Job Radar AI. Your role is that of a senior technical recruiter who deeply understands both software engineering career levels and hiring bar at top tech companies. Evaluate the following ${chunk.length} job posting(s) against the candidate's resume and return structured match evaluations for EACH job.
 
 === CANDIDATE RESUME ===
 ${resumeContent}
@@ -2501,28 +2516,47 @@ ${job.description.slice(0, 4000)}
 `).join("\n---\n")}
 
 EVALUATION & SCORING RULES:
-0. CRITICAL HARD BLOCKERS CHECK — evaluate this FIRST for each job:
-   - Carefully review the candidate's specified HARD BLOCKERS / CRITERIA TO AVOID above.
-   - If the job title, requirements, citizenship/clearance demands, responsibilities, or work arrangement match ANY of the candidate's specified hard blockers:
-     * THIS IS A DEALBREAKER HARD BLOCKER VIOLATION.
-     * You MUST cap the final score at a maximum of 25 (range 0 - 25) and set match_level to 'Unmatched'.
-     * In summary, reasons, and missing_skills, explicitly highlight the triggered hard blocker.
 
-1. CRITICAL YEARS OF EXPERIENCE (YoE) COMPARISON RULE:
-   - Compute candidate's total professional work experience in years from resume timeline.
-   - Extract required experience range/minimum from the job posting (e.g. "5+ years", "2-4 years").
-   - MANDATORY YOE RULE: IF candidate YOE is below the job's minimum requirement OR if the job description caps YOE (e.g. "2-4 years") and candidate YOE exceeds the upper bound (e.g. candidate has 5 years experience for a 2-4 year role), YOU MUST CLASSIFY THE MATCH LEVEL AS 'Weak Match' (OR 'Unmatched' IF GAP IS 8+ YEARS) AND CAP THE SCORE AT A MAXIMUM OF 55 (range 10-55).
+0. HARD BLOCKERS CHECK — evaluate this FIRST for each job:
+   - Carefully review the candidate's HARD BLOCKERS / CRITERIA TO AVOID listed above.
+   - If ANY aspect of the job (title, requirements, citizenship/clearance demands, responsibilities, work arrangement, company type) matches a hard blocker:
+     * THIS IS A DEALBREAKER. Cap the final score at a maximum of 25 and set match_level to 'Unmatched'.
+     * In summary, reasons, and missing_skills, explicitly name the triggered hard blocker rule.
 
-1.b. CRITICAL OVER-QUALIFICATION RULE:
-   - If candidate has ~3+ YoE and role is entry-level/new grad/intern, cap score at max 55 (Weak Match/Unmatched).
+1. YEARS OF EXPERIENCE (YoE) RULE — apply strictly:
+   - The candidate's total professional work experience is stated in the resume under "Total Professional Experience". Use that figure directly; do not recompute it.
+   - Extract the required experience range or minimum from the job posting (e.g. "5+ years", "2–4 years").
+   - If candidate YoE is BELOW the job's minimum: cap score at 59, set match_level to 'Weak Match' (or 'Unmatched' if gap ≥ 8 years).
+   - If the job has an upper YoE bound and candidate YoE EXCEEDS it: cap score at 59, set match_level to 'Weak Match'. This indicates over-qualification.
 
-2. SALARY & LOCATION ALIGNMENT:
-   - MANDATORY SALARY TARGET RULE: If the job posting discloses a salary range where the maximum bound is below the candidate's target minimum salary (e.g. disclosed max is $150K but candidate's target minimum is $200K+), YOU MUST CLASSIFY THE MATCH LEVEL AS 'Weak Match' AND CAP THE SCORE AT A MAXIMUM OF 55.
-   - "Seattle, WA" or "WA" is a PERFECT LOCATION MATCH for "Washington".
-   - ONLY deduct points for location if the job location matches NONE of the candidate's preferred locations.
+1b. OVER/UNDER-QUALIFICATION RULE (generalised):
+   - If the candidate's seniority level is clearly mismatched with the role's target level, cap score at 59 and set match_level to 'Weak Match' or 'Unmatched' depending on severity.
+   - Seniority mismatch examples (not exhaustive):
+     * Candidate has 3+ YoE applying to an entry-level, new grad, or internship role.
+     * Candidate has 10+ YoE applying to a role that explicitly targets junior engineers (e.g. "0–2 years", "recent graduate").
+   - Use judgment: a candidate with 6 YoE applying to a "5–7 year" role is NOT a mismatch.
+
+2. SALARY & LOCATION:
+   - SALARY: If the disclosed salary maximum is below the candidate's target minimum, cap score at 59 and set match_level to 'Weak Match'.
+   - LOCATION: "Seattle, WA" or "WA" is a PERFECT MATCH for "Washington". Only deduct points if the job location matches NONE of the candidate's preferred locations. Remote roles that list a preferred location are acceptable if the candidate's location is listed.
 
 3. TECHNICAL & SKILLS ALIGNMENT:
-   - Analyze overlap in core technologies and domain expertise.
+   - Evaluate depth of overlap in core technologies, domain expertise, and seniority signals (system design, architecture, leadership, scale of projects).
+   - When a job lists equivalent alternatives for a requirement (e.g. "proficiency in C or Java", "experience with React or Vue", "Python or Go"), the candidate satisfying ANY ONE of the alternatives fully meets that requirement — do NOT deduct points for the others.
+   - Weight skills by relevance to the role — a missing "nice to have" skill should not heavily penalise the score.
+   - Highlight transferable skills where direct matches are absent.
+
+4. SCORING RUBRIC:
+   - 80–100 → Strong Match: Candidate meets or exceeds most requirements; no blockers; strong skill overlap.
+   - 70–79  → Good Match: Candidate meets core requirements with minor gaps; worth applying.
+   - 60–69  → Weak Match: Moderate gaps in YoE, skills, salary, or location; possible but not ideal.
+   - 0–59   → Unmatched: Hard blocker triggered, YoE/seniority mismatch enforced, or severe misalignment across multiple dimensions.
+
+5. OUTPUT QUALITY:
+   - summary: 2–3 sentences giving a frank, specific executive assessment. Name actual technologies and specific gaps — avoid generic filler.
+   - reasons: Concrete, specific bullet points explaining the score. Reference actual skills, YoE numbers, and salary figures from the resume and posting.
+   - missing_skills: Skills or qualifications explicitly required by the job that are absent or unclear in the resume.
+   - recommended_actions: Specific, actionable steps the candidate can take to improve fit (e.g. "Build a project using X", "Obtain AWS Solutions Architect certification"). Avoid vague advice like "improve skills".
 
 Return a JSON array of objects, with one entry for each of the ${chunk.length} jobs evaluated. Ensure each object contains the exact "jobId" provided in the prompt.`;
 
