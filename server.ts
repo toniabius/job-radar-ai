@@ -1078,7 +1078,13 @@ async function fetchLiveLinkedInJobs(
               }
             }
 
-            // Fetch full job descriptions sequentially 1-by-1 with inter-card pacing delay to avoid LinkedIn 429s
+            // Fetch full job descriptions with inter-card pacing delay to avoid LinkedIn 429s
+            const fetchedCardsData: Array<{
+              card: typeof validCards[0];
+              fullDescription: string;
+              rawHtml: string;
+            }> = [];
+
             for (let cardIdx = 0; cardIdx < validCards.length; cardIdx++) {
               const card = validCards[cardIdx];
               if (isCancelled && isCancelled()) break;
@@ -1086,7 +1092,7 @@ async function fetchLiveLinkedInJobs(
                 addLog("SCANNER", `Fetching details (${cardIdx + 1}/${validCards.length}): "${card.jobTitle}" @ ${card.rawComp}...`);
               }
               let fullDescription = "";
-              let foundSalary = "";
+              let rawHtml = "";
               try {
                 await new Promise((r) => setTimeout(r, 300));
                 const jobPageRes = await fetch(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${card.jobId}`, {
@@ -1096,10 +1102,10 @@ async function fetchLiveLinkedInJobs(
                   }
                 });
                 if (jobPageRes.ok) {
-                  const jobPageHtml = await jobPageRes.text();
-                  const descMatch = jobPageHtml.match(/<div[^>]+class="[^"]*show-more-less-html__markup[^"]*"[^>]*>([\s\S]*?)<\/div>/i)
-                    || jobPageHtml.match(/<div[^>]+id="job-details"[^>]*>([\s\S]*?)<\/div>/i)
-                    || jobPageHtml.match(/<section[^>]+class="[^"]*description[^"]*"[^>]*>([\s\S]*?)<\/section>/i);
+                  rawHtml = await jobPageRes.text();
+                  const descMatch = rawHtml.match(/<div[^>]+class="[^"]*show-more-less-html__markup[^"]*"[^>]*>([\s\S]*?)<\/div>/i)
+                    || rawHtml.match(/<div[^>]+id="job-details"[^>]*>([\s\S]*?)<\/div>/i)
+                    || rawHtml.match(/<section[^>]+class="[^"]*description[^"]*"[^>]*>([\s\S]*?)<\/section>/i);
                   if (descMatch) {
                     fullDescription = descMatch[1]
                       .replace(/<br\s*\/?>/gi, "\n")
@@ -1110,27 +1116,43 @@ async function fetchLiveLinkedInJobs(
                       .replace(/\n{3,}/g, "\n\n")
                       .trim();
                   }
-                  
-                  foundSalary = await determineJobSalary(jobPageHtml || fullDescription, card.jobTitle, card.rawComp);
                 }
               } catch (fetchErr) {
                 console.error(`[JD FETCH] Exception fetching job description for ${card.jobId}:`, fetchErr);
               }
 
-              results.push({
-                company: card.rawComp,
-                title: card.jobTitle,
-                location: card.jobLoc,
-                url: card.viewUrl,
-                description: fullDescription || `${card.rawComp} is hiring for a ${card.jobTitle} role in ${card.jobLoc}. Direct posting listed on LinkedIn with job ID ${card.jobId}. Key requirements include software engineering, system architecture, and modern application development.`,
-                posted_time: card.postedTime,
-                employment_type: "Full-time",
-                department: "Engineering",
-                salary: foundSalary || "$Not found",
-                provider: "LinkedIn",
-                first_seen: new Date().toISOString(),
-                status: "new"
-              });
+              fetchedCardsData.push({ card, fullDescription, rawHtml });
+            }
+
+            // Extract salaries in one batch Gemini request (if AI is needed)
+            if (fetchedCardsData.length > 0) {
+              const salaryInputs = fetchedCardsData.map((fd) => ({
+                description: fd.rawHtml || fd.fullDescription,
+                title: fd.card.jobTitle,
+                company: fd.card.rawComp,
+              }));
+
+              const batchSalaries = await batchDetermineJobSalaries(salaryInputs);
+
+              for (let i = 0; i < fetchedCardsData.length; i++) {
+                const { card, fullDescription } = fetchedCardsData[i];
+                const foundSalary = batchSalaries[i] || "$Not found";
+
+                results.push({
+                  company: card.rawComp,
+                  title: card.jobTitle,
+                  location: card.jobLoc,
+                  url: card.viewUrl,
+                  description: fullDescription || `${card.rawComp} is hiring for a ${card.jobTitle} role in ${card.jobLoc}. Direct posting listed on LinkedIn with job ID ${card.jobId}. Key requirements include software engineering, system architecture, and modern application development.`,
+                  posted_time: card.postedTime,
+                  employment_type: "Full-time",
+                  department: "Engineering",
+                  salary: foundSalary,
+                  provider: "LinkedIn",
+                  first_seen: new Date().toISOString(),
+                  status: "new"
+                });
+              }
             }
           } catch (err) {
             console.error(`Error fetching live LinkedIn jobs for ${taskLabel} page ${startPage}:`, err);
@@ -1273,70 +1295,127 @@ function extractSalaryWithRegex(textOrHtml: string): string {
   return "$Not found";
 }
 
+async function batchDetermineJobSalaries(
+  jobsInput: Array<{ description: string; title?: string; company?: string }>
+): Promise<string[]> {
+  if (!jobsInput || jobsInput.length === 0) return [];
+
+  const results: string[] = new Array(jobsInput.length).fill("$Not found");
+  const indicesNeedingAI: number[] = [];
+
+  // 1. Fast regex check for all jobs in batch
+  for (let i = 0; i < jobsInput.length; i++) {
+    const job = jobsInput[i];
+    if (!job.description || !job.description.trim()) continue;
+
+    const regexSalary = extractSalaryWithRegex(job.description);
+    if (regexSalary && regexSalary !== "$Not found") {
+      results[i] = regexSalary;
+    } else if (/\d/.test(job.description)) {
+      indicesNeedingAI.push(i);
+    }
+  }
+
+  // 2. If no jobs need AI or no valid API key, return immediately
+  if (indicesNeedingAI.length === 0 || !hasValidApiKey()) {
+    return results;
+  }
+
+  // 3. Perform batch AI extraction in groups of 10 jobs per Gemini API request
+  const BATCH_SIZE = 10;
+  for (let b = 0; b < indicesNeedingAI.length; b += BATCH_SIZE) {
+    const chunkIndices = indicesNeedingAI.slice(b, b + BATCH_SIZE);
+    const chunkJobs = chunkIndices.map((idx) => jobsInput[idx]);
+
+    const config = loadConfig();
+    const primaryModel = config.gemini_model || "gemini-3.1-flash-lite";
+    const candidateModels = [primaryModel, ...ALL_GEMINI_FALLBACK_MODELS].filter((m, i, arr) => arr.indexOf(m) === i);
+
+    const promptJobsText = chunkJobs
+      .map((j, idx) => {
+        const textSnippet = j.description
+          .replace(/<br\s*\/?>/gi, "\n")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 3000);
+        return `[Job Index ${idx}]
+Title: ${j.title || "Job Role"}
+Company: ${j.company || "Company"}
+Posting Content:
+${textSnippet}`;
+      })
+      .join("\n\n---\n\n");
+
+    const prompt = `You are an AI salary and compensation extraction engine for Job Radar AI.
+Extract base salary ranges or pay rates explicitly mentioned in each of the ${chunkJobs.length} job postings below.
+
+CRITICAL RULES:
+1. Return ONLY a JSON array of objects, each containing "index" (number, 0 to ${chunkJobs.length - 1}) and "salary" (string).
+2. Format extracted annual base salary ranges as "$X - $Y" (e.g., "$175,000 - $280,000").
+3. Convert abbreviated ranges like "$175K - $280K", "$175k-$280k", "$175,000/yr" to full dollar figures "$175,000 - $280,000".
+4. If hourly pay rate (e.g. "$80 - $120/hr"), return "$80 - $120 / hr".
+5. DO NOT MAKE UP OR GUESS A SALARY RANGE. If no salary, compensation range, or pay rate is explicitly disclosed in the text for a job, return "Not found".
+
+Job Postings:
+${promptJobsText}`;
+
+    let chunkExtracted = false;
+    for (const model of candidateModels) {
+      if (chunkExtracted) break;
+      try {
+        await enforceGeminiRateLimit(model);
+        const ai = getGeminiClient();
+        const response = await ai.models.generateContent({
+          model,
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          config: {
+            temperature: 0.1,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  index: { type: Type.INTEGER },
+                  salary: { type: Type.STRING },
+                },
+                required: ["index", "salary"],
+              },
+            },
+          },
+        });
+
+        const raw = response.text || "";
+        const parsed: Array<{ index: number; salary: string }> = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (typeof item.index === "number" && item.index >= 0 && item.index < chunkIndices.length) {
+              const realIndex = chunkIndices[item.index];
+              const norm = normalizeSalary(item.salary || "");
+              if (norm && norm !== "$Not found") {
+                results[realIndex] = norm;
+              }
+            }
+          }
+          chunkExtracted = true;
+        }
+      } catch (err: any) {
+        console.warn(`[SALARY BATCH AI] Gemini (${model}) batch salary extraction failed:`, err?.message || err);
+      }
+    }
+  }
+
+  return results;
+}
+
 async function extractSalaryWithAI(
   jobDescriptionHtmlOrText: string,
   jobTitle?: string,
   company?: string
 ): Promise<string | null> {
-  if (!jobDescriptionHtmlOrText || !jobDescriptionHtmlOrText.trim()) return null;
-  if (!hasValidApiKey()) return null;
-
-  const config = loadConfig();
-  const primaryModel = config.gemini_model || "gemini-3.1-flash-lite";
-  const candidateModels = [primaryModel, ...ALL_GEMINI_FALLBACK_MODELS].filter((m, i, arr) => arr.indexOf(m) === i);
-
-  const textSnippet = jobDescriptionHtmlOrText
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (!/\d/.test(textSnippet)) return null;
-
-  const prompt = `You are an AI salary and compensation extraction engine for Job Radar AI.
-Extract the base salary range or pay rate explicitly mentioned in the job posting below.
-
-Job Title: ${jobTitle || "Job Role"}
-Company: ${company || "Company"}
-
-CRITICAL RULES:
-1. Return ONLY the extracted base salary range formatted as "$X - $Y" (e.g., "$175,000 - $280,000").
-2. Convert abbreviated ranges like "$175K - $280K", "$175k-$280k", "$175K to $280K", "$175,000/yr - $280,000/yr" to full dollar figures "$175,000 - $280,000".
-3. If a single annual salary figure is given (e.g. "$180,000"), return "$180,000".
-4. If hourly pay rate (e.g. "$80 - $120/hr"), return "$80 - $120 / hr".
-5. DO NOT MAKE UP OR GUESS A SALARY RANGE. If no salary, compensation range, or pay rate is explicitly disclosed in the job posting text, return "Not found".
-6. Return ONLY the raw result string (no explanations, no quotes, no markdown).
-
-Job Description:
-${textSnippet.slice(0, 8000)}`;
-
-  for (const model of candidateModels) {
-    try {
-      await enforceGeminiRateLimit(model);
-      const ai = getGeminiClient();
-      const response = await ai.models.generateContent({
-        model,
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-      });
-
-      const rawResult = (response.text || "").trim()
-        .replace(/^```[a-z]*\n?/i, "").replace(/```$/, "").trim()
-        .replace(/^["']|["']$/g, "").trim();
-
-      if (!rawResult || rawResult.toLowerCase().includes("not found")) {
-        return "$Not found";
-      }
-
-      const normalized = normalizeSalary(rawResult);
-      if (normalized && normalized !== "$Not found") {
-        return normalized;
-      }
-    } catch (err: any) {
-      console.warn(`[SALARY AI] Gemini (${model}) salary extraction failed or rate limited:`, err?.message || err);
-    }
-  }
-
-  return null;
+  const res = await batchDetermineJobSalaries([{ description: jobDescriptionHtmlOrText, title: jobTitle, company }]);
+  return res[0] && res[0] !== "$Not found" ? res[0] : null;
 }
 
 async function determineJobSalary(
@@ -1345,17 +1424,8 @@ async function determineJobSalary(
   company?: string
 ): Promise<string> {
   if (!descriptionOrHtml || !descriptionOrHtml.trim()) return "$Not found";
-
-  try {
-    const aiSalary = await extractSalaryWithAI(descriptionOrHtml, title, company);
-    if (aiSalary) {
-      return aiSalary;
-    }
-  } catch (err) {
-    console.warn("[SALARY] AI extraction error, falling back to regex match.");
-  }
-
-  return extractSalaryWithRegex(descriptionOrHtml);
+  const res = await batchDetermineJobSalaries([{ description: descriptionOrHtml, title, company }]);
+  return res[0] || "$Not found";
 }
 
 function detectHardBlockerViolation(job: Job, hardBlockersText?: string): { isBlocked: boolean; reason: string } {
@@ -2210,7 +2280,220 @@ app.post("/api/jobs/reset", (req, res) => {
   res.json({ success: true, jobs: [] });
 });
 
-// Helper for unified Gemini evaluation across single-job evaluate and pipeline scans
+// Helper for unified Gemini evaluation across single-job evaluate, batch evaluate, and pipeline scans
+async function batchEvaluateJobsWithGemini(
+  jobsList: Job[],
+  resumeContent: string,
+  configObj: AppConfig
+): Promise<Array<{
+  jobId: string;
+  evaluation: {
+    score: number;
+    match_level: 'Strong Match' | 'Good Match' | 'Weak Match' | 'Unmatched';
+    summary: string;
+    reasons: string[];
+    missing_skills: string[];
+    recommended_actions: string[];
+    model_used: string;
+  };
+}>> {
+  if (!jobsList || jobsList.length === 0) return [];
+
+  // 1. Ensure all jobs have salary checked/extracted via batch salary extraction
+  const jobsNeedingSalary = jobsList.filter(
+    (j) => !j.salary || j.salary === "$Not found" || j.salary.includes("USD")
+  );
+  if (jobsNeedingSalary.length > 0) {
+    const freshSalaries = await batchDetermineJobSalaries(
+      jobsNeedingSalary.map((j) => ({
+        description: j.description,
+        title: j.title,
+        company: j.company,
+      }))
+    );
+    for (let i = 0; i < jobsNeedingSalary.length; i++) {
+      if (freshSalaries[i] && freshSalaries[i] !== "$Not found") {
+        jobsNeedingSalary[i].salary = freshSalaries[i];
+      }
+    }
+  }
+
+  // 2. If no valid API key, use ATS Heuristic Engine for all jobs in batch
+  if (!hasValidApiKey()) {
+    const resumeParsed = parseResumeDetails(resumeContent, configObj.skills);
+    return jobsList.map((job) => {
+      const heur = generateHeuristicEvaluation(job, resumeParsed, configObj);
+      return { jobId: job.id, evaluation: { ...heur, model_used: "ATS Heuristic Engine" } };
+    });
+  }
+
+  // 3. Process jobs in batches of up to 5 jobs per Gemini API request
+  const BATCH_SIZE = 5;
+  const results: Array<{ jobId: string; evaluation: any }> = [];
+  const primaryModel = configObj.gemini_model || "gemini-3.1-flash-lite";
+  const candidateModels = [primaryModel, ...ALL_GEMINI_FALLBACK_MODELS].filter((m, i, arr) => arr.indexOf(m) === i);
+
+  for (let i = 0; i < jobsList.length; i += BATCH_SIZE) {
+    const chunk = jobsList.slice(i, i + BATCH_SIZE);
+
+    const chunkPrompt = `You are the AI Matcher engine in Job Radar AI. Evaluate the following ${chunk.length} job posting(s) against the candidate's resume and return structured match evaluations for EACH job.
+
+=== CANDIDATE RESUME ===
+${resumeContent}
+
+=== TARGET SALARY ===
+${configObj.min_salary || 200000} ${configObj.salary_currency || 'USD'} (Includes postings where disclosed salary range reaches or exceeds target)
+
+=== PREFERRED LOCATIONS (Candidate accepts roles in ANY of these independent regions) ===
+${configObj.locations && configObj.locations.length > 0 ? configObj.locations.map((loc, idx) => `  ${idx + 1}. "${loc}"`).join("\n") : "  - Any location"}
+
+=== HARD BLOCKERS / CRITERIA TO AVOID ===
+${configObj.hard_blockers && configObj.hard_blockers.trim() ? configObj.hard_blockers.trim() : "None specified."}
+
+=== JOB POSTINGS TO EVALUATE (${chunk.length} total) ===
+${chunk.map((job, idx) => `
+[JOB POSTING #${idx + 1} — ID: ${job.id}]
+Title: ${job.title}
+Company: ${job.company}
+Location: ${job.location}
+Salary Disclosed: ${job.salary || "Not disclosed"}
+Description:
+${job.description.slice(0, 4000)}
+`).join("\n---\n")}
+
+EVALUATION & SCORING RULES:
+0. CRITICAL HARD BLOCKERS CHECK — evaluate this FIRST for each job:
+   - Carefully review the candidate's specified HARD BLOCKERS / CRITERIA TO AVOID above.
+   - If the job title, requirements, citizenship/clearance demands, responsibilities, or work arrangement match ANY of the candidate's specified hard blockers:
+     * THIS IS A DEALBREAKER HARD BLOCKER VIOLATION.
+     * You MUST cap the final score at a maximum of 25 (range 0 - 25) and set match_level to 'Unmatched'.
+     * In summary, reasons, and missing_skills, explicitly highlight the triggered hard blocker.
+
+1. CRITICAL YEARS OF EXPERIENCE (YoE) COMPARISON RULE:
+   - Compute candidate's total professional work experience in years from resume timeline.
+   - Extract required minimum experience from the job posting.
+   - Apply mandatory deductions: Gap 1-2 yrs (-10 pts), Gap 3-4 yrs (-25 pts, max Good Match), Gap 5-7 yrs (-40 pts, Weak Match), Gap 8+ yrs (-55 pts, Unmatched).
+
+1.b. CRITICAL OVER-QUALIFICATION RULE:
+   - If candidate has ~3+ YoE and role is entry-level/new grad/intern, cap score at max 55 (Weak Match/Unmatched).
+
+2. SALARY & LOCATION ALIGNMENT:
+   - "Seattle, WA" or "WA" is a PERFECT LOCATION MATCH for "Washington".
+   - ONLY deduct points for location if the job location matches NONE of the candidate's preferred locations.
+
+3. TECHNICAL & SKILLS ALIGNMENT:
+   - Analyze overlap in core technologies and domain expertise.
+
+Return a JSON array of objects, with one entry for each of the ${chunk.length} jobs evaluated. Ensure each object contains the exact "jobId" provided in the prompt.`;
+
+    let chunkSuccess = false;
+    for (const selectedModel of candidateModels) {
+      if (chunkSuccess) break;
+      try {
+        await enforceGeminiRateLimit(selectedModel);
+        const ai = getGeminiClient();
+        const response = await ai.models.generateContent({
+          model: selectedModel,
+          contents: chunkPrompt,
+          config: {
+            temperature: 0.2,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  jobId: { type: Type.STRING, description: "Matching job ID from prompt" },
+                  score: { type: Type.INTEGER, description: "Match score 0 to 100" },
+                  match_level: { type: Type.STRING, description: "Strong Match | Good Match | Weak Match | Unmatched" },
+                  summary: { type: Type.STRING, description: "2-3 sentence executive match summary" },
+                  reasons: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  missing_skills: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  recommended_actions: { type: Type.ARRAY, items: { type: Type.STRING } },
+                },
+                required: ["jobId", "score", "match_level", "summary", "reasons", "missing_skills", "recommended_actions"],
+              },
+            },
+          },
+        });
+
+        const rawText = response.text || "[]";
+        const parsedArray: any[] = JSON.parse(rawText);
+
+        if (Array.isArray(parsedArray) && parsedArray.length > 0) {
+          for (let cIdx = 0; cIdx < chunk.length; cIdx++) {
+            const job = chunk[cIdx];
+            const evalObj = parsedArray.find((p) => p.jobId === job.id) || parsedArray[cIdx] || {};
+
+            // Hard Blocker post-processing guardrail
+            const hbCheck = detectHardBlockerViolation(job, configObj.hard_blockers);
+            if (hbCheck.isBlocked) {
+              evalObj.score = Math.min(evalObj.score || 15, 15);
+              evalObj.match_level = 'Unmatched';
+              if (!Array.isArray(evalObj.reasons)) evalObj.reasons = [];
+              if (!evalObj.reasons.some((r: string) => r.includes("Hard Blocker"))) {
+                evalObj.reasons.unshift(hbCheck.reason);
+              }
+              if (!Array.isArray(evalObj.missing_skills)) evalObj.missing_skills = [];
+              if (!evalObj.missing_skills.some((m: string) => m.includes("Hard Blocker"))) {
+                evalObj.missing_skills.unshift(hbCheck.reason);
+              }
+              if (!evalObj.summary || !evalObj.summary.includes("Hard Blocker")) {
+                evalObj.summary = `${hbCheck.reason}. ${evalObj.summary || ''}`;
+              }
+            }
+
+            // Apply location & data sanitization
+            const sanitized = sanitizeJobEvaluation(
+              { ...job, ...evalObj },
+              configObj.locations
+            );
+
+            results.push({
+              jobId: job.id,
+              evaluation: {
+                score: sanitized.score || 0,
+                match_level: sanitized.match_level || 'Good Match',
+                summary: sanitized.summary || '',
+                reasons: sanitized.reasons || [],
+                missing_skills: sanitized.missing_skills || [],
+                recommended_actions: sanitized.recommended_actions || evalObj.recommended_actions || [],
+                model_used: selectedModel,
+              },
+            });
+          }
+          chunkSuccess = true;
+        }
+      } catch (err: any) {
+        const errMsg = err?.message || String(err);
+        if (errMsg.includes("API_KEY_INVALID") || errMsg.includes("API key not valid")) {
+          isApiKeyKnownInvalid = true;
+          console.log("Notice: Gemini API key invalid. Falling back to ATS Heuristic Engine.");
+          break;
+        } else if (errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("quota")) {
+          console.log(`Notice: Gemini (${selectedModel}) rate limit (429) reached in batch eval. Pausing 2.5s before fallback model...`);
+          await new Promise((r) => setTimeout(r, 2500));
+        } else {
+          console.log(`Notice: Gemini (${selectedModel}) batch evaluation error:`, errMsg);
+        }
+      }
+    }
+
+    // Fallback if AI call failed for this chunk
+    if (!chunkSuccess) {
+      const resumeParsed = parseResumeDetails(resumeContent, configObj.skills);
+      for (const job of chunk) {
+        if (!results.some((r) => r.jobId === job.id)) {
+          const heur = generateHeuristicEvaluation(job, resumeParsed, configObj);
+          results.push({ jobId: job.id, evaluation: { ...heur, model_used: "ATS Heuristic Fallback" } });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
 async function evaluateJobWithGemini(
   job: Job,
   resumeContent: string,
@@ -2224,198 +2507,16 @@ async function evaluateJobWithGemini(
   recommended_actions: string[];
   model_used: string;
 }> {
-  if (!job.salary || job.salary === "$Not found" || job.salary.includes("USD")) {
-    const freshSalary = await determineJobSalary(job.description, job.title, job.company);
-    if (freshSalary) job.salary = freshSalary;
+  const batchRes = await batchEvaluateJobsWithGemini([job], resumeContent, configObj);
+  if (batchRes && batchRes.length > 0) {
+    return batchRes[0].evaluation;
   }
-
-  if (!hasValidApiKey()) {
-    const resumeParsed = parseResumeDetails(resumeContent, configObj.skills);
-    const heur = generateHeuristicEvaluation(
-      job,
-      resumeParsed,
-      configObj
-    );
-    return { ...heur, model_used: "ATS Heuristic Engine" };
-  }
-
-  const primaryModel = configObj.gemini_model || "gemini-3.1-flash-lite";
-  const candidateModels = [primaryModel, ...ALL_GEMINI_FALLBACK_MODELS].filter((m, i, arr) => arr.indexOf(m) === i);
-
-  for (const selectedModel of candidateModels) {
-    try {
-      await enforceGeminiRateLimit(selectedModel);
-      const ai = getGeminiClient();
-      const prompt = `You are the AI Matcher engine in Job Radar AI. Evaluate the job posting against the candidate's resume and return a structured match evaluation.
-
-=== CANDIDATE RESUME ===
-${resumeContent}
-
-=== TARGET SALARY ===
-${configObj.min_salary || 200000} ${configObj.salary_currency || 'USD'} (Includes postings where disclosed salary range reaches or exceeds target)
-
-=== PREFERRED LOCATIONS (Candidate accepts roles in ANY of these independent regions) ===
-${configObj.locations && configObj.locations.length > 0 ? configObj.locations.map((loc, i) => `  ${i + 1}. "${loc}"`).join("\n") : "  - Any location"}
-
-=== HARD BLOCKERS / CRITERIA TO AVOID ===
-${configObj.hard_blockers && configObj.hard_blockers.trim() ? configObj.hard_blockers.trim() : "None specified."}
-
-=== JOB POSTING ===
-Title: ${job.title}
-Company: ${job.company}
-Location: ${job.location}
-Salary Disclosed: ${job.salary || "Not disclosed"}
-Description:
-${job.description}
-
-EVALUATION & SCORING RULES:
-0. CRITICAL HARD BLOCKERS CHECK — evaluate this FIRST:
-   - Carefully review the candidate's specified HARD BLOCKERS / CRITERIA TO AVOID above.
-   - If the job title, requirements, citizenship/clearance demands, responsibilities, or work arrangement match ANY of the candidate's specified hard blockers (e.g. requires US citizenship/security clearance, is a Data Engineer role when data engineering is blocked, pure frontend role when blocked, 5-day on-site when blocked, etc.):
-     * THIS IS A DEALBREAKER HARD BLOCKER VIOLATION.
-     * You MUST cap the final score at a maximum of 25 (range 0 - 25) and set match_level to 'Unmatched'.
-     * In summary, reasons, and missing_skills, explicitly highlight the triggered hard blocker (e.g., "Hard Blocker Triggered: Role requires US Citizenship / Security Clearance").
-     * Hard blocker penalties CANNOT be overridden by any skill matches or salary alignment.
-
-1. CRITICAL YEARS OF EXPERIENCE (YoE) COMPARISON RULE — apply this FIRST before all other scoring:
-   - Carefully compute the candidate's total professional work experience in years from the resume timeline (e.g., start year of first job to present).
-   - Extract the required minimum experience from the job posting (e.g., "8+ years required", "10+ years experience", "12+ years required").
-   - Apply the following MANDATORY deductions based on the gap (required YoE minus candidate YoE):
-     * Gap of 1-2 years: deduct 10 points
-     * Gap of 3-4 years: deduct 25 points, set match_level to at most 'Good Match'
-     * Gap of 5-7 years: deduct 40 points, set match_level to 'Weak Match'
-     * Gap of 8+ years: deduct 55 points, set match_level to 'Unmatched'
-   - These deductions are NON-NEGOTIABLE. Do NOT offset them with skill alignment bonuses.
-   - You MUST explicitly list the experience gap in missing_skills (e.g., "Experience Gap: Candidate has ~5 years total experience, but role requires 12+ years").
-   - EXAMPLE: If candidate has 5 years and job requires 12 years → gap is 7 years → deduct 40 points → 'Weak Match' regardless of skill overlap.
-
-1.b. CRITICAL OVER-QUALIFICATION RULE — check for over-qualification alongside under-qualification:
-   - Compute candidate's total professional work experience in years (YoE) from resume work history.
-   - If candidate has ~3+ years of experience (or is an experienced/mid-level/senior engineer), AND the job title or description indicates an entry-level, new grad, or intern position (e.g. contains "New Grad", "New Graduate", "Early Career", "Intern", "Internship", "Junior", "Associate", "University Graduate", "0-1 years", or "0-2 years"):
-     * The candidate is OVER-QUALIFIED for this position.
-     * You MUST cap the final score at a maximum of 55 and set match_level to 'Weak Match' or 'Unmatched'.
-     * In summary, reasons, and missing_skills, explicitly note over-qualification (e.g., "Over-Qualification: Candidate has ~5 YoE, but role is targeted at New Graduates / Early Career applicants").
-     * DO NOT award scores above 60 to experienced candidates for entry-level, new grad, or intern roles.
-
-2. SALARY & LOCATION ALIGNMENT:
-   - CRITICAL LOCATION MATCHING & DISAMBIGUATION RULES:
-     * "Washington" or "WA" or "Washington State" refers to Washington State (includes Seattle, Bellevue, Redmond, Kirkland, etc.).
-     * "Washington DC" or "Washington, DC" or "D.C." or "DC" refers to Washington D.C. / District of Columbia.
-     * "Seattle, WA" or any city in Washington State IS A PERFECT LOCATION MATCH for "Washington" / "WA" / "Washington State".
-     * If the candidate's preferred locations list includes MULTIPLE locations (e.g. BOTH "Washington" AND "Washington DC"), it means they are open to roles in ANY of those regions.
-     * You MUST NOT claim a location mismatch (e.g., "Candidate prefers Washington DC area; role is based in Seattle, WA") if "Washington", "WA", "Seattle", or "Washington State" is listed among the preferred locations!
-     * ONLY deduct points for location if the job location (${job.location}) does NOT match ANY of the candidate's preferred locations or regions (${configObj.locations ? configObj.locations.join(", ") : "Any"}).
-   - If disclosed salary is below minimum target (${configObj.min_salary || 200000}), note the salary gap.
-
-3. TECHNICAL & SKILLS ALIGNMENT:
-   - Analyze overlap in core technologies, domain expertise, and responsibilities.
-   - Skill alignment bonuses should be moderate (max +15 points total) and cannot override a YoE penalty.
-
-Return JSON object matching schema:
-- score: integer (0-100)
-- match_level: "Strong Match" (>=80) | "Good Match" (60-79) | "Weak Match" (40-59) | "Unmatched" (<40)
-- summary: 2-3 sentence executive match summary highlighting fit and any major experience or skill gaps
-- reasons: 3-4 bullet strings of key alignments
-- missing_skills: skills or qualifications the JOB REQUIRES that are absent or unclear in the candidate's resume. Do NOT list skills the candidate has just because they aren't mentioned in the job description. Only list genuine gaps where the job explicitly or implicitly requires something the resume does not demonstrate.
-- recommended_actions: 2-3 actionable advice strings for candidate application`;
-
-      const response = await ai.models.generateContent({
-        model: selectedModel,
-        contents: prompt,
-        config: {
-          temperature: 0.2, // Low temperature for deterministic & repeatable scoring
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              score: { type: Type.INTEGER, description: "Match score from 0 to 100" },
-              match_level: {
-                type: Type.STRING,
-                description: "Strong Match | Good Match | Weak Match | Unmatched",
-              },
-              summary: { type: Type.STRING, description: "2-3 sentence executive match summary" },
-              reasons: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: "Bullet list of matching skills, experience, or alignments",
-              },
-              missing_skills: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: "Identified skill gaps, technical missing items, or YoE gap",
-              },
-              recommended_actions: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: "Concrete next steps for applying or tailoring the resume",
-              },
-            },
-            required: ["score", "match_level", "summary", "reasons", "missing_skills", "recommended_actions"],
-          },
-        },
-      });
-
-      const resObj = JSON.parse(response.text || "{}");
-      if (resObj && typeof resObj.score === "number") {
-        // Post-processing guardrail for Hard Blockers
-        const hbCheck = detectHardBlockerViolation(job, configObj.hard_blockers);
-        if (hbCheck.isBlocked) {
-          resObj.score = Math.min(resObj.score, 15);
-          resObj.match_level = 'Unmatched';
-          if (!Array.isArray(resObj.reasons)) resObj.reasons = [];
-          if (!resObj.reasons.some((r: string) => r.includes("Hard Blocker"))) {
-            resObj.reasons.unshift(hbCheck.reason);
-          }
-          if (!Array.isArray(resObj.missing_skills)) resObj.missing_skills = [];
-          if (!resObj.missing_skills.some((m: string) => m.includes("Hard Blocker"))) {
-            resObj.missing_skills.unshift(hbCheck.reason);
-          }
-          if (!resObj.summary || !resObj.summary.includes("Hard Blocker")) {
-            resObj.summary = `${hbCheck.reason}. ${resObj.summary || ''}`;
-          }
-        }
-
-        // Apply full location & data sanitization
-        const sanitized = sanitizeJobEvaluation(
-          { ...job, ...resObj },
-          configObj.locations
-        );
-
-        return {
-          score: sanitized.score || 0,
-          match_level: sanitized.match_level || 'Good Match',
-          summary: sanitized.summary || '',
-          reasons: sanitized.reasons || [],
-          missing_skills: sanitized.missing_skills || [],
-          recommended_actions: sanitized.recommended_actions || resObj.recommended_actions || [],
-          model_used: selectedModel,
-        };
-      }
-    } catch (err: any) {
-      const errMsg = err?.message || String(err);
-      if (errMsg.includes("API_KEY_INVALID") || errMsg.includes("API key not valid")) {
-        isApiKeyKnownInvalid = true;
-        console.log("Notice: Gemini API key invalid or inactive. Falling back to ATS Heuristic Engine.");
-        break;
-      } else if (errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("quota")) {
-        console.log(`Notice: Gemini (${selectedModel}) rate limit (429) reached. Pausing 2.5s before fallback model...`);
-        await new Promise((r) => setTimeout(r, 2500));
-      } else {
-        console.log(`Notice: Gemini (${selectedModel}) evaluation error. Trying fallback model...`);
-      }
-    }
-  }
-
   const resumeParsed = parseResumeDetails(resumeContent, configObj.skills);
-  const heur = generateHeuristicEvaluation(
-    job,
-    resumeParsed,
-    configObj
-  );
-  return { ...heur, model_used: "ATS Heuristic Fallback" };
+  const heur = generateHeuristicEvaluation(job, resumeParsed, configObj);
+  return { ...heur, model_used: "ATS Heuristic Engine" };
 }
 
-// 4. Gemini Matcher AI Endpoint
+// 4. Gemini Matcher AI Endpoint (Single job evaluation)
 app.post("/api/jobs/evaluate", async (req, res) => {
   try {
     const { jobId, job: inputJob, resume: inputResume } = req.body;
@@ -2469,6 +2570,58 @@ app.post("/api/jobs/evaluate", async (req, res) => {
   } catch (error: any) {
     console.error("Evaluation error:", error);
     return res.status(500).json({ error: error.message || "Failed to evaluate job" });
+  }
+});
+
+// 4b. Gemini Matcher Batch Endpoint
+app.post("/api/jobs/evaluate-batch", async (req, res) => {
+  try {
+    const { jobIds } = req.body;
+    const allJobs = loadJobsDB();
+    const activeProfileData = loadProfilesData().profiles.find(p => p.id === getActiveProfileId());
+    const resumeObj = activeProfileData?.resume ?? loadResume();
+    const configObj = loadConfig();
+
+    let jobsToEval: Job[] = [];
+    if (Array.isArray(jobIds) && jobIds.length > 0) {
+      jobsToEval = allJobs.filter((j) => jobIds.includes(j.id));
+    } else {
+      jobsToEval = allJobs.filter((j) => j.score === undefined);
+    }
+
+    if (jobsToEval.length === 0) {
+      return res.json({ success: true, evaluatedCount: 0, jobs: allJobs });
+    }
+
+    const evalResults = await batchEvaluateJobsWithGemini(jobsToEval, resumeObj.content, configObj);
+    const updatedMap = new Map<string, Job>();
+
+    for (const item of evalResults) {
+      const orig = jobsToEval.find((j) => j.id === item.jobId);
+      if (orig) {
+        updatedMap.set(item.jobId, {
+          ...orig,
+          score: item.evaluation.score,
+          match_level: item.evaluation.match_level,
+          summary: item.evaluation.summary,
+          reasons: item.evaluation.reasons,
+          missing_skills: item.evaluation.missing_skills,
+          recommended_actions: item.evaluation.recommended_actions,
+          model_used: item.evaluation.model_used,
+          processed_at: new Date().toISOString(),
+          status: "evaluated",
+        });
+      }
+    }
+
+    const updatedJobsList = allJobs.map((j) => updatedMap.get(j.id) || j);
+    saveJobsDB(updatedJobsList);
+    generateMarkdownReport(updatedJobsList);
+
+    return res.json({ success: true, evaluatedCount: updatedMap.size, jobs: updatedJobsList });
+  } catch (error: any) {
+    console.error("Batch evaluation error:", error);
+    return res.status(500).json({ error: error.message || "Failed to batch evaluate jobs" });
   }
 });
 
@@ -2547,23 +2700,25 @@ app.post("/api/pipeline/run", async (req, res) => {
     const pipelineStartTime = Date.now();
     addLog("CONFIG", "Loading runtime configuration from config/config.yaml...");
     const config = loadConfig();
+    const isCompanyFilteringEnabled = config.target_companies_enabled !== false;
     const allCompanies = config.companies || [];
-    const activeCompanies = allCompanies.filter((c) => c.enabled);
-    const disabledCompanies = allCompanies.filter((c) => !c.enabled);
+    const activeCompanies = isCompanyFilteringEnabled ? allCompanies.filter((c) => c.enabled) : [];
+    const disabledCompanies = isCompanyFilteringEnabled ? allCompanies.filter((c) => !c.enabled) : allCompanies;
     const targetRoles = config.target_roles && config.target_roles.length > 0
       ? config.target_roles
       : ["Software Engineer", "Full Stack AI Engineer"];
 
     const preferredLocs = config.locations || [];
-    const configSummary = activeCompanies.length > 0
+    const configSummary = isCompanyFilteringEnabled && activeCompanies.length > 0
       ? `${activeCompanies.length} enabled company target provider(s) out of ${allCompanies.length} configured company entry/entries across ${targetRoles.length} search role queries`
-      : `Open Web Search Mode (0 enabled target companies - searching all jobs in area for specified roles) across ${targetRoles.length} search role queries`;
+      : `Open Web Search Mode (${isCompanyFilteringEnabled ? "0 enabled target companies" : "Target company filtering disabled"} - searching all jobs in area for specified roles) across ${targetRoles.length} search role queries`;
 
     addLog(
       "CONFIG",
       `Loaded configuration: ${configSummary}`,
-      `Active Enabled Companies (${activeCompanies.length}): ${activeCompanies.length > 0 ? activeCompanies.map((c) => `${c.name} (${c.provider})`).join(", ") : "None (Open Web Search Mode - searching all target jobs in area)"}` +
-      (disabledCompanies.length > 0 ? `\nDisabled Companies (${disabledCompanies.length}): ${disabledCompanies.map((c) => `${c.name} (${c.provider})`).join(", ")} (Skipped during scan)` : "") +
+      `Target Company Filtering: ${isCompanyFilteringEnabled ? "Enabled" : "Disabled (Open Web Search Mode)"}` +
+      `\nActive Enabled Companies (${activeCompanies.length}): ${activeCompanies.length > 0 ? activeCompanies.map((c) => `${c.name} (${c.provider})`).join(", ") : "None (Open Web Search Mode - searching all target jobs in area)"}` +
+      (disabledCompanies.length > 0 ? `\nDisabled/Bypassed Companies (${disabledCompanies.length}): ${disabledCompanies.map((c) => `${c.name} (${c.provider})`).join(", ")} (${isCompanyFilteringEnabled ? "Disabled in list" : "Bypassed because section is disabled"})` : "") +
       `\nTarget Search Roles (${targetRoles.length}): ${targetRoles.join(", ")}` +
       `\nTarget Locations: ${preferredLocs.length > 0 ? preferredLocs.join(", ") : "Any"}`
     );
@@ -2669,28 +2824,35 @@ app.post("/api/pipeline/run", async (req, res) => {
       const evalStartTime = Date.now();
       const selectedModel = config.gemini_model || "gemini-3.1-flash-lite";
       const totalToEval = jobsNeedingEval.length;
-      addLog("GEMINI_AI", `Starting sequential AI evaluation for ${totalToEval} job(s) (Model: ${selectedModel})...`);
+      addLog("GEMINI_AI", `Starting batch AI evaluation for ${totalToEval} job(s) in groups of 5 (Model: ${selectedModel})...`);
 
-      for (let i = 0; i < jobsNeedingEval.length; i++) {
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < jobsNeedingEval.length; i += BATCH_SIZE) {
         if (isCancelled()) break;
-        const job = jobsNeedingEval[i];
+        const chunk = jobsNeedingEval.slice(i, i + BATCH_SIZE);
+        const chunkTitles = chunk.map((j) => `"${j.title}" @ ${j.company}`).join(", ");
 
-        addLog("GEMINI_AI", `Evaluating (${i + 1}/${totalToEval}) "${job.title}" @ ${job.company}...`);
+        addLog("GEMINI_AI", `Evaluating batch (${i + 1}-${Math.min(i + chunk.length, totalToEval)}/${totalToEval}): ${chunkTitles}...`);
 
-        const resData = await evaluateJobWithGemini(job, resume.content, config);
+        const evalResults = await batchEvaluateJobsWithGemini(chunk, resume.content, config);
 
-        job.score = resData.score;
-        job.match_level = resData.match_level;
-        job.summary = resData.summary;
-        job.reasons = resData.reasons;
-        job.missing_skills = resData.missing_skills;
-        job.recommended_actions = resData.recommended_actions;
-        job.model_used = resData.model_used;
-        job.processed_at = new Date().toISOString();
-        job.status = "evaluated";
-        evaluatedJobsCount++;
+        for (const resItem of evalResults) {
+          const job = chunk.find((j) => j.id === resItem.jobId);
+          if (job) {
+            job.score = resItem.evaluation.score;
+            job.match_level = resItem.evaluation.match_level;
+            job.summary = resItem.evaluation.summary;
+            job.reasons = resItem.evaluation.reasons;
+            job.missing_skills = resItem.evaluation.missing_skills;
+            job.recommended_actions = resItem.evaluation.recommended_actions;
+            job.model_used = resItem.evaluation.model_used;
+            job.processed_at = new Date().toISOString();
+            job.status = "evaluated";
+            evaluatedJobsCount++;
 
-        addLog("GEMINI_AI", `[EVAL DONE] (${i + 1}/${totalToEval}) "${job.title}" @ ${job.company} -> Score: ${job.score}/100 [${job.match_level}]`);
+            addLog("GEMINI_AI", `[EVAL DONE] "${job.title}" @ ${job.company} -> Score: ${job.score}/100 [${job.match_level}]`);
+          }
+        }
       }
 
       evalDurationSec = ((Date.now() - evalStartTime) / 1000).toFixed(1);

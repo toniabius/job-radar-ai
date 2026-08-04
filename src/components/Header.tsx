@@ -39,8 +39,8 @@ export const Header: React.FC<HeaderProps> = ({
                   Local-First Pipeline
                 </span>
               </div>
-              <p className="text-xs text-slate-5-00 text-slate-500 hidden sm:block">
-                LinkedIn & ATS Job Monitor with Gemini Evaluation Engine
+              <p className="text-xs text-slate-500 hidden sm:block">
+                LinkedIn Job Monitor with Gemini Evaluation Engine
               </p>
             </div>
           </div>

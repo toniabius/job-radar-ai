@@ -42,7 +42,7 @@ export default function App() {
 
   // Search & Filters
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [scoreFilter, setScoreFilter] = useState<'ALL' | 'STRONG' | 'GOOD'>('ALL');
+  const [scoreFilter, setScoreFilter] = useState<'ALL' | 'QUALIFIED' | 'STRONG' | 'GOOD' | 'LOW'>('ALL');
   const [companyFilter, setCompanyFilter] = useState<string>('ALL');
   const [salaryFilter, setSalaryFilter] = useState<string>('ALL');
   const [locationFilter, setLocationFilter] = useState<string>('ALL');
@@ -261,36 +261,29 @@ export default function App() {
     }
   };
 
-  // Evaluate all pending jobs sequentially (1-by-1)
+  // Evaluate all pending jobs in fast AI batches
   const handleEvaluateAllJobs = async () => {
     setIsBulkEvaluating(true);
     try {
       const pendingJobs = jobs.filter((j) => j.score === undefined);
       const jobsToEval = pendingJobs.length > 0 ? pendingJobs : jobs;
+      const jobIds = jobsToEval.map((j) => j.id);
 
-      for (let i = 0; i < jobsToEval.length; i++) {
-        const job = jobsToEval[i];
-        setEvaluatingJobId(job.id);
-        try {
-          const res = await fetch('/api/jobs/evaluate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ jobId: job.id, job }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.job) {
-              setJobs((prev) => prev.map((j) => (j.id === data.job.id ? data.job : j)));
-            }
-          }
-        } catch (err) {
-          console.error(`Evaluation error for job ${job.id}:`, err);
+      const res = await fetch('/api/jobs/evaluate-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobIds }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.jobs) {
+          setJobs(data.jobs);
         }
+        await fetchReport();
       }
-
-      await fetchReport();
     } catch (err) {
-      console.error('Bulk evaluation error:', err);
+      console.error('Batch evaluation error:', err);
     } finally {
       setEvaluatingJobId(null);
       setIsBulkEvaluating(false);
@@ -553,13 +546,17 @@ export default function App() {
 
       let matchesScore = true;
       const minThreshold = config?.minimum_score ?? 65;
-      if (scoreFilter === 'STRONG') {
+      if (scoreFilter === 'QUALIFIED') {
+        matchesScore = j.score === undefined || (j.score || 0) >= minThreshold;
+      } else if (scoreFilter === 'STRONG') {
         matchesScore = (j.score || 0) >= 80;
       } else if (scoreFilter === 'GOOD') {
         matchesScore = (j.score || 0) >= minThreshold && (j.score || 0) < 80;
+      } else if (scoreFilter === 'LOW') {
+        matchesScore = j.score !== undefined && (j.score || 0) < minThreshold;
       } else {
-        // 'ALL' - Only surface listings whose match score is over minimum AI match score (or unscored pending jobs)
-        matchesScore = j.score === undefined || (j.score || 0) >= minThreshold;
+        // 'ALL' - Show ALL jobs in inventory regardless of match score
+        matchesScore = true;
       }
 
       return matchesQuery && matchesCompany && matchesSalary && matchesLocation && matchesScore;
@@ -741,7 +738,17 @@ export default function App() {
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
-                    All Qualified ({jobs.filter((j) => j.score === undefined || (j.score || 0) >= 60).length})
+                    All Jobs ({jobs.length})
+                  </button>
+                  <button
+                    onClick={() => setScoreFilter('QUALIFIED')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      scoreFilter === 'QUALIFIED'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                    }`}
+                  >
+                    Qualified ({jobs.filter((j) => j.score === undefined || (j.score || 0) >= minScoreThreshold).length})
                   </button>
                   <button
                     onClick={() => setScoreFilter('STRONG')}
@@ -751,7 +758,7 @@ export default function App() {
                         : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
                     }`}
                   >
-                    Strong Matches ({jobs.filter((j) => (j.score || 0) >= 80).length})
+                    Strong (80+) ({jobs.filter((j) => (j.score || 0) >= 80).length})
                   </button>
                   <button
                     onClick={() => setScoreFilter('GOOD')}
@@ -761,7 +768,17 @@ export default function App() {
                         : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
                     }`}
                   >
-                    Good Matches ({jobs.filter((j) => (j.score || 0) >= 60 && (j.score || 0) < 80).length})
+                    Good ({minScoreThreshold}-79) ({jobs.filter((j) => (j.score || 0) >= minScoreThreshold && (j.score || 0) < 80).length})
+                  </button>
+                  <button
+                    onClick={() => setScoreFilter('LOW')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      scoreFilter === 'LOW'
+                        ? 'bg-slate-700 text-white shadow-xs'
+                        : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                    }`}
+                  >
+                    Unmatched / Below Cutoff ({jobs.filter((j) => j.score !== undefined && (j.score || 0) < minScoreThreshold).length})
                   </button>
                 </div>
 
@@ -794,18 +811,44 @@ export default function App() {
 
             {/* Job Grid */}
             {filteredJobs.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-slate-200/80 p-12 text-center">
+              <div className="bg-white rounded-2xl border border-slate-200/80 p-12 text-center shadow-xs">
                 <Filter className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-                <h3 className="font-bold text-slate-800 text-base mb-1">No Job Postings Found</h3>
-                <p className="text-xs text-slate-500 max-w-sm mx-auto mb-4">
-                  No jobs matched your current filter criteria. Run the pipeline to discover new postings or clear active filters.
+                <h3 className="font-bold text-slate-800 text-base mb-1">
+                  {jobs.length > 0 ? 'No Jobs Match Selected Filter' : 'No Job Postings Found'}
+                </h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto mb-5 leading-relaxed">
+                  {jobs.length > 0 ? (
+                    <>
+                      You have <strong>{jobs.length} total jobs</strong> stored in your current profile inventory, but <strong>0 match your active filter settings</strong>.
+                      {scoreFilter !== 'ALL' && (
+                        <span> (Active match threshold filter: <strong>{scoreFilter}</strong> with minimum score cutoff <strong>{minScoreThreshold}</strong>).</span>
+                      )}
+                    </>
+                  ) : (
+                    <>No jobs are currently available in this profile. Run the pipeline scan to discover new job postings or import listings manually.</>
+                  )}
                 </p>
-                <button
-                  onClick={resetAllFilters}
-                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg text-xs shadow-xs"
-                >
-                  Reset All Filters
-                </button>
+                <div className="flex items-center justify-center space-x-3">
+                  {jobs.length > 0 && (
+                    <button
+                      onClick={() => {
+                        resetAllFilters();
+                        setScoreFilter('ALL');
+                      }}
+                      className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg text-xs shadow-xs transition-colors"
+                    >
+                      Show All {jobs.length} Jobs
+                    </button>
+                  )}
+                  {hasActiveFilters && (
+                    <button
+                      onClick={resetAllFilters}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-xs transition-colors"
+                    >
+                      Reset Filters
+                    </button>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

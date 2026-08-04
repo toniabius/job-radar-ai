@@ -12,6 +12,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     { name: 'Airbnb', enabled: true, provider: 'LinkedIn' },
     { name: 'Microsoft', enabled: true, provider: 'LinkedIn' },
   ],
+  target_companies_enabled: true,
   target_roles: [
     'Software Engineer',
   ],

@@ -103,6 +103,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
 
   const dumpYamlString = (cfg: AppConfig): string => {
     let yaml = "# Job Radar AI Pipeline Search & Evaluation Configuration\n";
+    yaml += `target_companies_enabled: ${cfg.target_companies_enabled !== false}\n`;
     yaml += "companies:\n";
     (cfg.companies || []).forEach((c) => {
       yaml += `  - name: "${c.name}"\n    enabled: ${c.enabled}\n    provider: "${c.provider}"\n`;
@@ -967,99 +968,137 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
 
             {/* Target Companies Section */}
             <div className="pt-6 border-t border-slate-200">
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                <div className="flex items-center space-x-2">
-                  <Building className="w-4 h-4 text-emerald-600" />
-                  <h3 className="font-bold text-slate-900 text-sm">Target Company Providers <span className="text-slate-400 font-normal text-xs">(Optional)</span></h3>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <span className="text-slate-500 text-[11px] font-mono bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                    {config.companies.filter((c) => c.enabled).length} of {config.companies.length} Enabled
-                  </span>
-                  {config.companies.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setConfig({ ...config, companies: [] })}
-                      className="text-[10px] text-rose-600 hover:text-rose-800 hover:underline font-medium"
-                    >
-                      Clear All
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <p className="text-xs text-slate-500 mb-3">
-                <strong className="text-slate-700 font-semibold">Optional filter:</strong> Leave this list empty to scan broadly across <span className="text-emerald-700 font-medium">all top tech companies and ATS platforms</span> matching candidate roles.
-              </p>
-
-              {config.companies.length > 0 ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-                  {config.companies.map((company, index) => (
-                    <div
-                      key={index}
-                      className={`p-3 rounded-xl border transition-all flex items-center justify-between ${
-                        company.enabled
-                          ? 'bg-emerald-50/40 border-emerald-200/80 shadow-2xs'
-                          : 'bg-slate-50 border-slate-200 opacity-60'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-2.5">
-                        <input
-                          type="checkbox"
-                          checked={company.enabled}
-                          onChange={() => toggleCompany(index)}
-                          className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
-                        />
-                        <div>
-                          <h4 className="font-bold text-slate-900 text-xs">{company.name}</h4>
-                          <p className="text-[10px] text-slate-500">
-                            Adapter: <span className="font-mono text-emerald-700 font-semibold">{company.provider}</span>
-                          </p>
-                        </div>
+              {(() => {
+                const isCompanyFilteringEnabled = config.target_companies_enabled !== false;
+                return (
+                  <>
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center space-x-3">
+                        <label className="flex items-center space-x-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={isCompanyFilteringEnabled}
+                            onChange={(e) => saveUpdatedConfig({ ...config, target_companies_enabled: e.target.checked })}
+                            className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
+                          />
+                          <Building className={`w-4 h-4 ${isCompanyFilteringEnabled ? 'text-emerald-600' : 'text-slate-400'}`} />
+                          <h3 className="font-bold text-slate-900 text-sm">Target Company Providers</h3>
+                        </label>
+                        <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
+                          isCompanyFilteringEnabled
+                            ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                            : 'bg-slate-200 text-slate-600 border-slate-300'
+                        }`}>
+                          {isCompanyFilteringEnabled ? 'Enabled' : 'Disabled (Open Web Search)'}
+                        </span>
                       </div>
 
-                      <button
-                        onClick={() => deleteCompany(index)}
-                        className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
-                        title="Remove Target"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-slate-500 text-[11px] font-mono bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                          {config.companies.filter((c) => c.enabled).length} of {config.companies.length} Companies Selected
+                        </span>
+                        {config.companies.length > 0 && isCompanyFilteringEnabled && (
+                          <button
+                            type="button"
+                            onClick={() => setConfig({ ...config, companies: [] })}
+                            className="text-[10px] text-rose-600 hover:text-rose-800 hover:underline font-medium"
+                          >
+                            Clear All
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-4 mb-4 text-center">
-                  <p className="text-xs text-emerald-800 font-medium">
-                    ✨ Open Web Search Mode active for profile <strong>"{profileName}"</strong>.
-                  </p>
-                </div>
-              )}
 
-              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 flex flex-wrap items-center gap-2">
-                <input
-                  type="text"
-                  placeholder="Company Name (e.g., Stripe, Meta, Apple)"
-                  value={newCompanyName}
-                  onChange={(e) => setNewCompanyName(e.target.value)}
-                  className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-emerald-500 shrink-0 w-full sm:w-48"
-                />
-                <select
-                  value="LinkedIn"
-                  disabled
-                  className="bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700 cursor-not-allowed shrink-0"
-                >
-                  <option value="LinkedIn">LinkedIn</option>
-                </select>
+                    <p className="text-xs text-slate-500 mb-3">
+                      Uncheck the box above to disable company filtering and run an <strong className="text-emerald-700 font-semibold">Open Web Search</strong> for your target roles across all companies.
+                    </p>
 
-                <button
-                  onClick={addCompany}
-                  className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white shadow-xs transition-colors shrink-0"
-                >
-                  <Plus className="w-3.5 h-3.5 mr-1" />
-                  Add Target Company
-                </button>
-              </div>
+                    {!isCompanyFilteringEnabled && (
+                      <div className="bg-amber-50/90 border border-amber-200/90 rounded-xl p-3.5 mb-4 flex items-center space-x-3 text-xs text-amber-900 font-medium">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <div>
+                          <strong>Target Company Filtering Disabled:</strong> Scans will ignore specific company boundaries and perform a general search across all top employers for your target roles. Your target company selections below are preserved but greyed out.
+                        </div>
+                      </div>
+                    )}
+
+                    <div className={`transition-all ${!isCompanyFilteringEnabled ? 'opacity-40 pointer-events-none grayscale-[40%]' : ''}`}>
+                      {config.companies.length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+                          {config.companies.map((company, index) => (
+                            <div
+                              key={index}
+                              className={`p-3 rounded-xl border transition-all flex items-center justify-between ${
+                                company.enabled && isCompanyFilteringEnabled
+                                  ? 'bg-emerald-50/40 border-emerald-200/80 shadow-2xs'
+                                  : 'bg-slate-50 border-slate-200 opacity-60'
+                              }`}
+                            >
+                              <div className="flex items-center space-x-2.5">
+                                <input
+                                  type="checkbox"
+                                  disabled={!isCompanyFilteringEnabled}
+                                  checked={company.enabled}
+                                  onChange={() => toggleCompany(index)}
+                                  className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
+                                />
+                                <div>
+                                  <h4 className="font-bold text-slate-900 text-xs">{company.name}</h4>
+                                  <p className="text-[10px] text-slate-500">
+                                    Adapter: <span className="font-mono text-emerald-700 font-semibold">{company.provider}</span>
+                                  </p>
+                                </div>
+                              </div>
+
+                              <button
+                                disabled={!isCompanyFilteringEnabled}
+                                onClick={() => deleteCompany(index)}
+                                className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
+                                title="Remove Target"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-4 mb-4 text-center">
+                          <p className="text-xs text-emerald-800 font-medium">
+                            ✨ Open Web Search Mode active for profile <strong>"{profileName}"</strong>.
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 flex flex-wrap items-center gap-2">
+                        <input
+                          type="text"
+                          disabled={!isCompanyFilteringEnabled}
+                          placeholder="Company Name (e.g., Stripe, Meta, Apple)"
+                          value={newCompanyName}
+                          onChange={(e) => setNewCompanyName(e.target.value)}
+                          className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-emerald-500 shrink-0 w-full sm:w-48 disabled:bg-slate-100"
+                        />
+                        <select
+                          value="LinkedIn"
+                          disabled
+                          className="bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700 cursor-not-allowed shrink-0"
+                        >
+                          <option value="LinkedIn">LinkedIn</option>
+                        </select>
+
+                        <button
+                          disabled={!isCompanyFilteringEnabled}
+                          onClick={addCompany}
+                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white shadow-xs transition-colors shrink-0 disabled:bg-slate-400"
+                        >
+                          <Plus className="w-3.5 h-3.5 mr-1" />
+                          Add Target Company
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>

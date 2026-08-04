@@ -34,6 +34,7 @@ export interface CompanyConfig {
 
 export interface AppConfig {
   companies: CompanyConfig[];
+  target_companies_enabled?: boolean;
   target_roles?: string[];
   locations: string[];
   skills: string[];
