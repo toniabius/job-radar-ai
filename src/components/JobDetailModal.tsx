@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Sparkles, MapPin, Clock, Briefcase, ExternalLink, CheckCircle2, AlertCircle, Lightbulb, RefreshCw } from 'lucide-react';
+import { X, Sparkles, MapPin, Clock, Briefcase, ExternalLink, CheckCircle2, AlertCircle, Lightbulb, RefreshCw, Trash2 } from 'lucide-react';
 import { Job } from '../types';
 import { ensureAbsoluteUrl } from '../utils/url';
 
@@ -7,6 +7,8 @@ interface JobDetailModalProps {
   job: Job | null;
   onClose: () => void;
   onEvaluate: (job: Job) => void;
+  onDelete?: (id: string) => void;
+  onToggleApplied?: (job: Job, applied: boolean) => void;
   isEvaluating?: boolean;
 }
 
@@ -14,17 +16,26 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
   job,
   onClose,
   onEvaluate,
+  onDelete,
+  onToggleApplied,
   isEvaluating,
 }) => {
   if (!job) return null;
+
+  const handleDelete = () => {
+    if (onDelete && job) {
+      onDelete(job.id);
+      onClose();
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         {/* Modal Header */}
-        <div className="p-6 bg-slate-900 text-slate-100 flex items-start justify-between">
-          <div>
-            <div className="flex items-center space-x-2 mb-1">
+        <div className="p-6 bg-slate-900 text-slate-100 flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center space-x-2 mb-1 flex-wrap gap-y-1">
               <span className="font-semibold text-emerald-400 text-xs uppercase tracking-wider">{job.company}</span>
               <span className="text-slate-600">•</span>
               <span className="text-xs text-slate-400 font-mono">ID: {job.id}</span>
@@ -39,10 +50,41 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2.5 shrink-0 pt-0.5">
+            {/* Applied Checkbox */}
+            {onToggleApplied && (
+              <label className="inline-flex items-center space-x-2 bg-slate-800 hover:bg-slate-700/80 px-3 py-1.5 rounded-lg border border-slate-700/80 cursor-pointer select-none transition-colors">
+                <input
+                  type="checkbox"
+                  checked={job.applied || false}
+                  onChange={(e) => onToggleApplied(job, e.target.checked)}
+                  className="w-4 h-4 text-emerald-500 rounded border-slate-600 bg-slate-900 focus:ring-emerald-500 cursor-pointer"
+                />
+                <span className={`text-xs font-semibold ${job.applied ? 'text-emerald-400' : 'text-slate-300'}`}>
+                  {job.applied ? '✓ Applied' : 'Applied?'}
+                </span>
+              </label>
+            )}
+
+            {/* Delete Button */}
+            {onDelete && (
+              <button
+                type="button"
+                onClick={handleDelete}
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold text-rose-300 hover:text-white bg-rose-950/80 hover:bg-rose-900 border border-rose-800/80 rounded-lg transition-colors cursor-pointer"
+                title="Delete this job card and close"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Delete</span>
+              </button>
+            )}
+
+            {/* Close Modal Button */}
             <button
+              type="button"
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              title="Close modal"
             >
               <X className="w-5 h-5" />
             </button>

@@ -9,7 +9,7 @@ import { AddJobModal } from './components/AddJobModal';
 import { ScanProgressModal } from './components/ScanProgressModal';
 import { ScanLogsView } from './components/ScanLogsView';
 import { Job, AppConfig, ResumeData, UserProfile, PipelineLog } from './types';
-import { Search, Sparkles, Filter, ArrowUpDown, Building, DollarSign, MapPin, X, Clock, User } from 'lucide-react';
+import { Search, Sparkles, Filter, ArrowUpDown, Building, DollarSign, MapPin, X, Clock, User, Trash2 } from 'lucide-react';
 import { parseLocationGroup, parseMinSalary } from './utils/location';
 
 export default function App() {
@@ -310,16 +310,51 @@ export default function App() {
 
   // Delete Job
   const handleDeleteJob = async (id: string) => {
+    // Optimistically remove from state immediately
+    setJobs((prev) => prev.filter((j) => j.id !== id));
+    if (selectedJob && selectedJob.id === id) {
+      setSelectedJob(null);
+    }
+
     try {
       const res = await fetch(`/api/jobs/${id}`, { method: 'DELETE' });
       if (res.ok) {
-        setJobs((prev) => prev.filter((j) => j.id !== id));
-        if (selectedJob && selectedJob.id === id) {
-          setSelectedJob(null);
-        }
+        await fetchReport();
+      } else {
+        // Fallback refresh if backend delete failed
+        await fetchJobs();
       }
     } catch (err) {
       console.error('Error deleting job:', err);
+      await fetchJobs();
+    }
+  };
+
+  // Delete All Jobs Below Minimum Match Score Cutoff
+  const handleDeleteJobsBelowThreshold = async () => {
+    const lowScoreJobs = jobs.filter((j) => j.score !== undefined && (j.score || 0) < minScoreThreshold);
+    if (lowScoreJobs.length === 0) {
+      return;
+    }
+
+    // Optimistically update local state immediately so UI updates with zero lag
+    setJobs((prev) => prev.filter((j) => j.score === undefined || (j.score || 0) >= minScoreThreshold));
+
+    try {
+      const res = await fetch('/api/jobs/delete-below-threshold', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threshold: minScoreThreshold }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.jobs) {
+          setJobs(data.jobs);
+        }
+        await fetchReport();
+      }
+    } catch (err) {
+      console.error('Error purging jobs below threshold:', err);
     }
   };
 
@@ -784,10 +819,21 @@ export default function App() {
 
                 {/* Sort & Reset Actions */}
                 <div className="flex items-center space-x-2 shrink-0">
+                  {jobs.filter((j) => j.score !== undefined && (j.score || 0) < minScoreThreshold).length > 0 && (
+                    <button
+                      onClick={handleDeleteJobsBelowThreshold}
+                      className="px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200/80 rounded-lg transition-colors flex items-center shadow-2xs cursor-pointer"
+                      title={`Delete all evaluated jobs with AI score below minimum threshold (${minScoreThreshold})`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 mr-1 text-rose-500" />
+                      Delete Below Cutoff ({jobs.filter((j) => j.score !== undefined && (j.score || 0) < minScoreThreshold).length})
+                    </button>
+                  )}
+
                   {hasActiveFilters && (
                     <button
                       onClick={resetAllFilters}
-                      className="px-2.5 py-1.5 text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg transition-colors flex items-center"
+                      className="px-2.5 py-1.5 text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg transition-colors flex items-center cursor-pointer"
                     >
                       <X className="w-3 h-3 mr-1" />
                       Clear Filters
@@ -883,8 +929,10 @@ export default function App() {
           <DatabaseViewer
             jobs={jobs}
             activeProfileName={activeProfileName}
+            minimumScoreThreshold={minScoreThreshold}
             onResetDatabase={handleResetDatabase}
             onDeleteJob={handleDeleteJob}
+            onDeleteBelowThreshold={handleDeleteJobsBelowThreshold}
             onToggleApplied={handleToggleApplied}
             onEvaluateJob={handleEvaluateJob}
             onEvaluateAllJobs={handleEvaluateAllJobs}
@@ -942,6 +990,8 @@ export default function App() {
         job={selectedJob}
         onClose={() => setSelectedJob(null)}
         onEvaluate={handleEvaluateJob}
+        onDelete={handleDeleteJob}
+        onToggleApplied={handleToggleApplied}
         isEvaluating={evaluatingJobId === selectedJob?.id}
       />
 

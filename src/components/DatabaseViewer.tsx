@@ -6,8 +6,10 @@ import { ensureAbsoluteUrl } from '../utils/url';
 interface DatabaseViewerProps {
   jobs: Job[];
   activeProfileName?: string;
+  minimumScoreThreshold?: number;
   onResetDatabase: () => void;
   onDeleteJob: (id: string) => void;
+  onDeleteBelowThreshold?: () => void;
   onToggleApplied: (job: Job, applied: boolean) => void;
   onEvaluateJob?: (job: Job) => void;
   onEvaluateAllJobs?: () => void;
@@ -18,8 +20,10 @@ interface DatabaseViewerProps {
 export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
   jobs,
   activeProfileName,
+  minimumScoreThreshold = 65,
   onResetDatabase,
   onDeleteJob,
+  onDeleteBelowThreshold,
   onToggleApplied,
   onEvaluateJob,
   onEvaluateAllJobs,
@@ -32,6 +36,7 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
   const [sortBy, setSortBy] = useState<'score_desc' | 'score_asc' | 'date_desc' | 'date_asc' | 'title_asc' | 'company_asc'>('score_desc');
 
   const uniqueProviders = Array.from(new Set(jobs.map((j) => j.provider).filter(Boolean)));
+  const lowScoreCount = jobs.filter((j) => j.score !== undefined && (j.score || 0) < minimumScoreThreshold).length;
 
   const filteredJobs = jobs.filter((j) => {
     const matchesSearch =
@@ -120,6 +125,23 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
                 <Sparkles className="w-3.5 h-3.5 mr-1.5" />
               )}
               Evaluate All Pending
+            </button>
+          )}
+
+          {onDeleteBelowThreshold && (
+            <button
+              type="button"
+              onClick={onDeleteBelowThreshold}
+              disabled={lowScoreCount === 0}
+              className={`inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                lowScoreCount > 0
+                  ? 'bg-rose-950/80 hover:bg-rose-900 text-rose-200 border border-rose-800 cursor-pointer shadow-2xs'
+                  : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+              }`}
+              title={`Delete all evaluated jobs with match score below minimum threshold (${minimumScoreThreshold})`}
+            >
+              <Trash2 className="w-3.5 h-3.5 mr-1.5 text-rose-400" />
+              Delete Below Cutoff ({lowScoreCount})
             </button>
           )}
 

@@ -2280,6 +2280,23 @@ app.post("/api/jobs/reset", (req, res) => {
   res.json({ success: true, jobs: [] });
 });
 
+app.post("/api/jobs/delete-below-threshold", (req, res) => {
+  try {
+    const configObj = loadConfig();
+    const threshold = typeof req.body?.threshold === "number" ? req.body.threshold : (configObj.minimum_score || 65);
+    let jobs = loadJobsDB();
+    const totalBefore = jobs.length;
+    jobs = jobs.filter((j) => j.score === undefined || (j.score || 0) >= threshold);
+    const deletedCount = totalBefore - jobs.length;
+    saveJobsDB(jobs);
+    generateMarkdownReport(jobs);
+    res.json({ success: true, deletedCount, remainingCount: jobs.length, threshold, jobs });
+  } catch (err: any) {
+    console.error("Error deleting jobs below threshold:", err);
+    res.status(500).json({ error: err.message || "Failed to delete jobs below threshold" });
+  }
+});
+
 // Helper for unified Gemini evaluation across single-job evaluate, batch evaluate, and pipeline scans
 async function batchEvaluateJobsWithGemini(
   jobsList: Job[],
