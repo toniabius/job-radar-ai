@@ -68,11 +68,15 @@ Job Radar AI uses a **Full-Stack Monolithic Architecture** combining a **React 1
 To ensure high accuracy, zero downtime, and robust job analysis:
 1. **Primary Evaluation Engine**: Powered by `@google/genai` using `gemini-3.1-flash-lite` with cascading fallbacks (`gemini-2.5-flash-lite`, `gemini-2.5-flash`) and sliding-window rate limit throttling (`enforceGeminiRateLimit`). Performs structured prompt evaluation comparing job requirements against `resume.md` and candidate detected skills (`parsedSkills`).
 2. **AI Salary & Compensation Extraction Engine**:
-   - `determineJobSalary` executes during job discovery and AI evaluation routines to scan raw job descriptions or page HTML for explicit base salary ranges or hourly rates using Gemini models and regex pattern matching.
-   - Converts raw compensation expressions (e.g., `$175K - $280K`, `$175k-$280k`, `$175,000/yr`) into standardized dollar ranges (`$175,000 - $280,000` or `$80 - $120 / hr`).
+   - `determineJobSalary` / `batchDetermineJobSalaries` / `extractSalaryWithRegex` execute during job discovery and AI evaluation routines to scan raw job descriptions or page HTML for explicit base salary ranges or hourly rates using Gemini models and regex pattern matching.
+   - Converts raw compensation expressions (e.g., `$170K/yr - $250K/yr`, `$175,000/yr`, `$80/hr`) into standardized dollar ranges (`$170,000 - $250,000` or `$80 - $120 / hr`).
    - If no compensation is explicitly disclosed, assigns `$Not found` without fabricating false data.
-3. **Resilient Fallback Mode**: If `GEMINI_API_KEY` is not configured or returns an authentication error (e.g., `API_KEY_INVALID`), the backend automatically flags `isApiKeyKnownInvalid` and redirects evaluation to a deterministic **ATS Heuristic Scoring Engine**.
-4. **ATS Heuristic Algorithm**: Calculates term overlap between candidate resume skills/experience (including user-customized `parsedSkills`) and job title/description, generating deterministic fit scores (0-100%), matching reason lists, missing skill identification, and actionable cover letter guidance.
+3. **Evaluation Guardrails & Score Caps**:
+   - **Disclosed Below-Target Salary Guardrail**: If a job posting explicitly discloses a salary range where the maximum bound is below the candidate's `min_salary` preference (e.g., max is `$150,000` but target minimum is `$200,000+`), match level is capped at **Weak Match** (max score 55).
+   - **YOE Range & Ceiling Guardrail**: Parses minimum experience requirements and upper bound ceilings (`extractYoeBounds`). If candidate YOE is below required minimum OR exceeds upper bound ceiling (e.g. 5 YOE for a "2-4 years" role), score is capped at max 55 (**Weak Match**).
+   - **Hard Blocker Rules**: `detectHardBlockerViolation` checks job title, company, and description against user dealbreaker criteria (e.g., Security Clearance, Contractor/1099, Staffing Agencies, Data/Test Engineer roles, 5-day On-site). Matches trigger a hard blocker penalty and score cap (max 25).
+4. **Resilient Fallback Mode**: If `GEMINI_API_KEY` is not configured or returns an authentication error (e.g., `API_KEY_INVALID`), the backend automatically flags `isApiKeyKnownInvalid` and redirects evaluation to a deterministic **ATS Heuristic Scoring Engine**.
+5. **ATS Heuristic Algorithm**: Calculates term overlap between candidate resume skills/experience (including user-customized `parsedSkills`) and job title/description, generating deterministic fit scores (0-100%), matching reason lists, missing skill identification, and actionable cover letter guidance.
 
 ---
 

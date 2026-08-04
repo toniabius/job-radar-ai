@@ -918,7 +918,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                 <textarea
                   value={config.hard_blockers || ''}
                   onChange={(e) => setConfig({ ...config, hard_blockers: e.target.value })}
-                  placeholder="e.g.&#10;- Require US Citizenship or Active Security Clearance&#10;- Data Engineer or Data Architect roles&#10;- Pure Frontend roles without Backend architecture&#10;- On-site 5 days a week&#10;- Web3 or Gambling companies"
+                  placeholder="e.g.&#10;- Require US Citizenship or Active Security Clearance&#10;- Data Engineer or Data Architect or Test Engineer roles&#10;- Pure Frontend roles without Backend architecture&#10;- Contractor or 1099 roles&#10;- Recruiting agency / staffing firm posts (only company direct hire)&#10;- On-site 5 days a week"
                   rows={4}
                   className="w-full bg-white border border-slate-300 rounded-lg p-3 text-xs text-slate-900 font-mono placeholder:text-slate-400 focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500/20"
                 />
@@ -930,11 +930,11 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                   <div className="flex flex-wrap gap-1.5">
                     {[
                       'Requires US Citizenship / Security Clearance',
-                      'Data Engineer or Data Architect roles',
+                      'Data Engineer or Data Architect or Test Engineer roles',
                       'Pure Frontend without Backend architecture',
+                      'Contractor or 1099 roles',
+                      'Recruiting agency / staffing firm posts (only company direct hire)',
                       '5 days On-site requirement',
-                      'Unpaid or pure commission positions',
-                      'Web3 / Crypto / Gambling industry',
                     ].map((preset) => {
                       const isAdded = (config.hard_blockers || '').toLowerCase().includes(preset.toLowerCase());
                       return (

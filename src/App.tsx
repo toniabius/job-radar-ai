@@ -9,7 +9,7 @@ import { AddJobModal } from './components/AddJobModal';
 import { ScanProgressModal } from './components/ScanProgressModal';
 import { ScanLogsView } from './components/ScanLogsView';
 import { Job, AppConfig, ResumeData, UserProfile, PipelineLog } from './types';
-import { Search, Sparkles, Filter, ArrowUpDown, Building, DollarSign, MapPin, X, Clock, User, Trash2 } from 'lucide-react';
+import { Search, Sparkles, Filter, ArrowUpDown, Building, DollarSign, MapPin, X, Clock, User, Trash2, CheckCircle2 } from 'lucide-react';
 import { parseLocationGroup, parseMinSalary } from './utils/location';
 
 export default function App() {
@@ -46,6 +46,7 @@ export default function App() {
   const [companyFilter, setCompanyFilter] = useState<string>('ALL');
   const [salaryFilter, setSalaryFilter] = useState<string>('ALL');
   const [locationFilter, setLocationFilter] = useState<string>('ALL');
+  const [appliedFilter, setAppliedFilter] = useState<'ALL' | 'APPLIED' | 'NOT_APPLIED'>('ALL');
   const [sortBy, setSortBy] = useState<'score' | 'date'>('score');
 
   // Load Initial Data from Express API
@@ -594,7 +595,11 @@ export default function App() {
         matchesScore = true;
       }
 
-      return matchesQuery && matchesCompany && matchesSalary && matchesLocation && matchesScore;
+      let matchesApplied = true;
+      if (appliedFilter === 'APPLIED') matchesApplied = !!j.applied;
+      else if (appliedFilter === 'NOT_APPLIED') matchesApplied = !j.applied;
+
+      return matchesQuery && matchesCompany && matchesSalary && matchesLocation && matchesScore && matchesApplied;
     })
     .sort((a, b) => {
       if (sortBy === 'score') {
@@ -605,7 +610,7 @@ export default function App() {
 
   const minScoreThreshold = config?.minimum_score ?? 65;
   const strongMatchesCount = jobs.filter((j) => (j.score || 0) >= minScoreThreshold).length;
-  const hasActiveFilters = searchQuery !== '' || companyFilter !== 'ALL' || salaryFilter !== 'ALL' || locationFilter !== 'ALL' || scoreFilter !== 'ALL';
+  const hasActiveFilters = searchQuery !== '' || companyFilter !== 'ALL' || salaryFilter !== 'ALL' || locationFilter !== 'ALL' || scoreFilter !== 'ALL' || appliedFilter !== 'ALL';
 
   const activeProfileName = useMemo(() => {
     return profiles.find((p) => p.id === activeProfileId)?.name || 'Default Profile';
@@ -617,6 +622,7 @@ export default function App() {
     setSalaryFilter('ALL');
     setLocationFilter('ALL');
     setScoreFilter('ALL');
+    setAppliedFilter('ALL');
   };
 
   return (
@@ -657,7 +663,7 @@ export default function App() {
             {/* Filter & Action Toolbar */}
             <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs mb-6 space-y-3">
               {/* Top Row: Search & Specific Dropdown Filters */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
                 {/* Search Bar */}
                 <div className="relative">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
@@ -757,6 +763,20 @@ export default function App() {
                         ))}
                       </optgroup>
                     )}
+                  </select>
+                </div>
+
+                {/* Filter by Applied Status */}
+                <div className="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                  <select
+                    value={appliedFilter}
+                    onChange={(e) => setAppliedFilter(e.target.value as 'ALL' | 'APPLIED' | 'NOT_APPLIED')}
+                    className="w-full bg-transparent border-0 text-xs font-medium text-slate-800 focus:outline-hidden cursor-pointer"
+                  >
+                    <option value="ALL">All Statuses ({jobs.length})</option>
+                    <option value="APPLIED">Applied ({jobs.filter((j) => j.applied).length})</option>
+                    <option value="NOT_APPLIED">Not Applied ({jobs.filter((j) => !j.applied).length})</option>
                   </select>
                 </div>
               </div>

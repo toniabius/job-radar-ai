@@ -1166,22 +1166,72 @@ async function fetchLiveLinkedInJobs(
   return { jobs: results, totalScanned };
 }
 
-function extractRequiredYoe(text: string): number {
-  // Match patterns like "12+ years", "10-15 years", "8 years of experience", "minimum 7 years"
-  const patterns = [
+function extractYoeBounds(text: string): { minYoe: number; maxYoe?: number } {
+  if (!text) return { minYoe: 0 };
+
+  // 1. Range patterns: e.g. "2-4 years", "2 to 4 years", "1 - 3 years", "3-5 years of experience"
+  const rangePatterns = [
+    /(\d+)\s*(?:-|–|—|\bto\b)\s*(\d+)\s*years?\s*(?:of\s*)?(?:professional\s+|relevant\s+|related\s+|work\s+|industry\s+)?experience/i,
+    /(?:between\s+)?(\d+)\s*(?:and|to)\s*(\d+)\s*years?\s*(?:of\s+)?experience/i,
+    /(\d+)\s*(?:-|–|—|\bto\b)\s*(\d+)\s*yrs/i,
+  ];
+
+  for (const pattern of rangePatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const minVal = parseInt(match[1], 10);
+      const maxVal = parseInt(match[2], 10);
+      if (!isNaN(minVal) && !isNaN(maxVal) && maxVal >= minVal && maxVal <= 40) {
+        return { minYoe: minVal, maxYoe: maxVal };
+      }
+    }
+  }
+
+  // 2. Minimum YOE patterns: "5+ years", "minimum 5 years", "at least 5 years"
+  const minPatterns = [
     /(\d+)\+?\s*(?:to\s*\d+)?\s*years?\s*(?:of\s*)?(?:professional\s+|relevant\s+|related\s+|work\s+|industry\s+)?experience/i,
     /minimum\s+(?:of\s+)?(\d+)\s*(?:\+)?\s*years?/i,
     /at\s+least\s+(\d+)\s*(?:\+)?\s*years?/i,
     /(\d+)\s*(?:\+)?\s*years?\s+(?:of\s+)?(?:professional|work|industry|relevant)/i,
+    /(\d+)\+\s*yrs/i,
   ];
-  for (const pattern of patterns) {
+
+  for (const pattern of minPatterns) {
     const match = text.match(pattern);
     if (match) {
-      const yoe = parseInt(match[1], 10);
-      if (yoe > 0 && yoe <= 40) return yoe;
+      const val = parseInt(match[1], 10);
+      if (!isNaN(val) && val <= 40) return { minYoe: val };
     }
   }
-  return 0;
+
+  return { minYoe: 0 };
+}
+
+function extractRequiredYoe(text: string): number {
+  return extractYoeBounds(text).minYoe;
+}
+
+function extractMaxSalaryNumber(salaryStr: string): number {
+  if (!salaryStr || salaryStr === "$Not found" || salaryStr.toLowerCase().includes("not found")) return 0;
+  const cleaned = salaryStr.replace(/,/g, "");
+  const matches = cleaned.match(/\$?(\d+(?:\.\d+)?)\s*(k|m)?/gi);
+  if (!matches) return 0;
+  let maxVal = 0;
+  for (const m of matches) {
+    const isK = /k/i.test(m);
+    const isM = /m/i.test(m);
+    const num = parseFloat(m.replace(/[\$kKmM]/g, ""));
+    if (!isNaN(num)) {
+      let val = num;
+      if (isK) val = num * 1000;
+      else if (isM) val = num * 1000000;
+      else if (val < 1000 && !salaryStr.toLowerCase().includes("hr") && !salaryStr.toLowerCase().includes("hour")) {
+        val = val * 1000;
+      }
+      if (val > maxVal) maxVal = val;
+    }
+  }
+  return maxVal;
 }
 
 function formatSingleAmount(token: string, isHourly: boolean = false): string {
@@ -1273,19 +1323,22 @@ function extractSalaryWithRegex(textOrHtml: string): string {
     .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ")
     .trim();
 
-  const contextMatch = text.match(/(?:salary|compensation|pay|rate|base)\s*(?:range|scale|is)?[^<]{0,100}?([\$€£]\s*\d[\d,.]*\s*[kKmM]?(?:\s*(?:[-–—]|to)\s*[\$€£]?\s*\d[\d,.]*\s*[kKmM]?)?)/i);
-  if (contextMatch && contextMatch[1]) {
-    const norm = normalizeSalary(contextMatch[1]);
-    if (norm && norm !== "$Not found") return norm;
-  }
-
-  const rangeMatch = text.match(/(?:[\$€£]|USD\s*[\$€£]?)\s*(\d[\d,.]*\s*[kKmM]?)\s*(?:[-–—]|to)\s*([\$€£]?\s*\d[\d,.]*\s*[kKmM]?)/i);
+  // 1. Full Range Match (e.g. "$170K/yr - $250K/yr", "$170,000/yr - $250,000/yr", "$170k - $250k", "$80/hr - $120/hr")
+  const rangeMatch = text.match(/(?:[\$€£]|USD\s*[\$€£]?)\s*(\d[\d,.]*\s*(?:[kKmM]|\/yr|\/year|\/hr|\/hour)*)\s*(?:[-–—]|\bto\b)\s*([\$€£]?\s*\d[\d,.]*\s*(?:[kKmM]|\/yr|\/year|\/hr|\/hour)*)/i);
   if (rangeMatch) {
     const raw = `${rangeMatch[1]} - ${rangeMatch[2]}`;
     const norm = normalizeSalary(raw);
     if (norm && norm !== "$Not found") return norm;
   }
 
+  // 2. Contextual Salary Match (e.g. "Salary: $170K/yr - $250K/yr")
+  const contextMatch = text.match(/(?:salary|compensation|pay|rate|base)\s*(?:range|scale|is)?[^<]{0,100}?([\$€£]\s*\d[\d,.]*\s*(?:[kKmM]|\/yr|\/year|\/hr)*\s*(?:[-–—]|\bto\b)\s*[\$€£]?\s*\d[\d,.]*\s*(?:[kKmM]|\/yr|\/year|\/hr)*)/i);
+  if (contextMatch && contextMatch[1]) {
+    const norm = normalizeSalary(contextMatch[1]);
+    if (norm && norm !== "$Not found") return norm;
+  }
+
+  // 3. Single Match fallback (only when no range is present)
   const singleMatch = text.match(/([\$€£]\s*\d[\d,.]*\s*[kKmM]?)\s*(?:USD|EUR|GBP|\/yr|\/year|per\s+year|annual|annually)/i);
   if (singleMatch && singleMatch[1]) {
     const norm = normalizeSalary(singleMatch[1]);
@@ -1484,20 +1537,26 @@ function detectHardBlockerViolation(job: Job, hardBlockersText?: string): { isBl
       }
     }
 
-    // 2. Data Engineering / Data Architect Blocker Check
+    // 2. Data Engineering / Data Architect / Test Engineering Blocker Check
     if (
       normLine.includes("data engineer") ||
       normLine.includes("data engineering") ||
-      normLine.includes("data architect")
+      normLine.includes("data architect") ||
+      normLine.includes("test engineer") ||
+      normLine.includes("qa engineer")
     ) {
       if (
         normJobText.includes("data engineer") ||
         normJobText.includes("data engineering") ||
-        normJobText.includes("data architect")
+        normJobText.includes("data architect") ||
+        normJobText.includes("test engineer") ||
+        normJobText.includes("qa engineer") ||
+        normJobText.includes("software engineer in test") ||
+        normJobText.includes("sdet")
       ) {
         return {
           isBlocked: true,
-          reason: `Hard Blocker Triggered: Data Engineering role ("${line}")`
+          reason: `Hard Blocker Triggered: Restricted specialized role ("${line}")`
         };
       }
     }
@@ -1543,26 +1602,59 @@ function detectHardBlockerViolation(job: Job, hardBlockersText?: string): { isBl
       }
     }
 
-    // 5. Web3 / Crypto / Gambling Check
+    // 5. Contractor / 1099 Check
     if (
-      normLine.includes("web3") ||
-      normLine.includes("crypto") ||
-      normLine.includes("gambling")
+      normLine.includes("contractor") ||
+      normLine.includes("1099") ||
+      normLine.includes("contract role") ||
+      normLine.includes("temp")
     ) {
       if (
-        normJobText.includes("web3") ||
-        normJobText.includes("crypto") ||
-        normJobText.includes("blockchain") ||
-        normJobText.includes("gambling")
+        normJobText.includes("contractor") ||
+        normJobText.includes("1099") ||
+        normJobText.includes("contract role") ||
+        normJobText.includes("w2 contract") ||
+        normJobText.includes("contract position") ||
+        normJobText.includes("contract-to-hire") ||
+        normJobText.includes("contract to hire") ||
+        normJobText.includes("temp position") ||
+        normJobText.includes("temporary position")
       ) {
         return {
           isBlocked: true,
-          reason: `Hard Blocker Triggered: Restricted industry ("${line}")`
+          reason: `Hard Blocker Triggered: Contractor or 1099 role ("${line}")`
         };
       }
     }
 
-    // 6. Generic phrase fallback match
+    // 6. Recruiting Agency / Staffing Firm Check (only company direct hire)
+    if (
+      normLine.includes("recruiter") ||
+      normLine.includes("recruiting") ||
+      normLine.includes("staffing") ||
+      normLine.includes("agency") ||
+      normLine.includes("direct hire")
+    ) {
+      if (
+        normJobText.includes("staffing agency") ||
+        normJobText.includes("recruiting agency") ||
+        normJobText.includes("recruitment agency") ||
+        normJobText.includes("placement agency") ||
+        normJobText.includes("employment agency") ||
+        normJobText.includes("talent agency") ||
+        normJobText.includes("on behalf of our client") ||
+        normJobText.includes("posting for our client") ||
+        normJobText.includes("our client is hiring") ||
+        normJobText.includes("client company")
+      ) {
+        return {
+          isBlocked: true,
+          reason: `Hard Blocker Triggered: Recruiting or staffing agency post (only company direct hire allowed) ("${line}")`
+        };
+      }
+    }
+
+    // 7. Generic phrase fallback match
     const cleanKeyword = normLine
       .replace(/i (don't|do not) (want|like) (any|a|to be)?/gi, "")
       .replace(/requires?|requires? a|requires? us|avoid|no|without|never/gi, "")
@@ -1583,7 +1675,6 @@ function generateHeuristicEvaluation(job: Job, resume: ResumeData, config?: AppC
   const text = `${job.title} ${job.company} ${job.description || ''} ${job.department || ''}`.toLowerCase();
 
   // Use the parsed skills from the resume (already driven by config.skills in parseResumeDetails).
-  // The fallback here is a last-resort safety net only — in normal operation parsedSkills is always populated.
   const resumeSkills = resume.parsedSkills?.length
     ? resume.parsedSkills
     : (config?.skills ?? ["TypeScript", "React", "Node.js", "Python", "REST API", "GraphQL"]);
@@ -1591,7 +1682,6 @@ function generateHeuristicEvaluation(job: Job, resume: ResumeData, config?: AppC
   const matchedSkills = resumeSkills.filter((s) => text.includes(s.toLowerCase()));
 
   // Skills the JOB requires that the candidate does NOT have.
-  // Scan the job text using config.skills + a broad baseline tech vocabulary.
   const baselineJobVocab = [
     "TypeScript", "JavaScript", "React", "Vue", "Angular", "Node.js", "Python", "Java", "C++", "Go", "Rust",
     "SQL", "PostgreSQL", "MongoDB", "Redis", "AWS", "GCP", "Azure", "Docker", "Kubernetes",
@@ -1626,24 +1716,41 @@ function generateHeuristicEvaluation(job: Job, resume: ResumeData, config?: AppC
     }
   }
 
-  // Check YOE alignment — penalize hard when candidate is under-qualified
+  // Check YOE alignment (Minimum requirement & Upper Bound Ceiling)
   let yoePenalty = 0;
   let yoeNote = "";
   const candidateYoe = resume.experienceYears || 0;
-  const requiredYoe = extractRequiredYoe(`${job.title} ${job.description || ''}`);
-  if (candidateYoe > 0 && requiredYoe > 0) {
-    const gap = requiredYoe - candidateYoe;
+  const yoeBounds = extractYoeBounds(`${job.title} ${job.description || ''}`);
+  let isUnderYoe = false;
+  let isExceedingMaxYoe = false;
+
+  if (candidateYoe > 0 && yoeBounds.minYoe > 0 && candidateYoe < yoeBounds.minYoe) {
+    isUnderYoe = true;
+    const gap = yoeBounds.minYoe - candidateYoe;
     if (gap >= 5) {
-      // Severe gap: 40-point penalty (mirrors Gemini prompt Rule #1)
-      yoePenalty = 40;
-      yoeNote = `Experience Gap: Candidate has ~${candidateYoe} years total experience, but role requires ${requiredYoe}+ years`;
-    } else if (gap >= 3) {
-      // Moderate gap
-      yoePenalty = 20;
-      yoeNote = `Experience Gap: Candidate has ~${candidateYoe} years experience; role prefers ${requiredYoe}+ years`;
-    } else if (gap >= 1) {
-      yoePenalty = 10;
-      yoeNote = `Minor experience gap: Candidate has ~${candidateYoe} years; role asks for ${requiredYoe}+ years`;
+      yoePenalty = 45;
+      yoeNote = `Experience Gap (Weak Match): Candidate (~${candidateYoe} yrs) is significantly below required ${yoeBounds.minYoe}+ yrs criteria`;
+    } else {
+      yoePenalty = 25;
+      yoeNote = `Experience Gap (Weak Match): Candidate (~${candidateYoe} yrs) is below required ${yoeBounds.minYoe}+ yrs criteria`;
+    }
+  } else if (candidateYoe > 0 && yoeBounds.maxYoe !== undefined && candidateYoe > yoeBounds.maxYoe) {
+    isExceedingMaxYoe = true;
+    yoePenalty = 25;
+    yoeNote = `Over-Qualified for YOE Ceiling (Weak Match): Candidate (~${candidateYoe} yrs) exceeds role's maximum experience range (${yoeBounds.minYoe}-${yoeBounds.maxYoe} yrs)`;
+  }
+
+  // Check Salary Alignment against target minimum salary
+  let salaryPenalty = 0;
+  let salaryNote = "";
+  let isBelowTargetSalary = false;
+  const targetMinSalary = config?.min_salary || 0;
+  if (targetMinSalary > 0 && job.salary && job.salary !== "$Not found") {
+    const maxDisclosed = extractMaxSalaryNumber(job.salary);
+    if (maxDisclosed > 0 && maxDisclosed < targetMinSalary) {
+      isBelowTargetSalary = true;
+      salaryPenalty = 25;
+      salaryNote = `Below Target Salary (Weak Match): Disclosed salary max ($${maxDisclosed.toLocaleString()}) is below target minimum ($${targetMinSalary.toLocaleString()})`;
     }
   }
 
@@ -1676,12 +1783,17 @@ function generateHeuristicEvaluation(job: Job, resume: ResumeData, config?: AppC
   }
   const variance = (Math.abs(hash) % 11) - 5;
   let scoreCap = (candidateYoe >= 3 && isEntryLevelRole) ? 55 : 96;
+  if (isUnderYoe || isExceedingMaxYoe || isBelowTargetSalary) scoreCap = Math.min(scoreCap, 55);
   if (hardBlockerPenalty > 0) scoreCap = Math.min(scoreCap, 25);
 
-  const finalScore = Math.min(scoreCap, Math.max(10, baseScore + variance - locationPenalty - yoePenalty - overQualPenalty - hardBlockerPenalty));
+  const finalScore = Math.min(scoreCap, Math.max(10, baseScore + variance - locationPenalty - yoePenalty - salaryPenalty - overQualPenalty - hardBlockerPenalty));
 
   let matchLevel: 'Strong Match' | 'Good Match' | 'Weak Match' | 'Unmatched' = 'Good Match';
-  if (finalScore >= 80) matchLevel = 'Strong Match';
+  if (hardBlockerPenalty > 0) {
+    matchLevel = 'Unmatched';
+  } else if (isUnderYoe || isExceedingMaxYoe || isBelowTargetSalary) {
+    matchLevel = finalScore < 30 ? 'Unmatched' : 'Weak Match';
+  } else if (finalScore >= 80) matchLevel = 'Strong Match';
   else if (finalScore >= 70) matchLevel = 'Good Match';
   else if (finalScore >= 40) matchLevel = 'Weak Match';
   else matchLevel = 'Unmatched';
@@ -2388,13 +2500,14 @@ EVALUATION & SCORING RULES:
 
 1. CRITICAL YEARS OF EXPERIENCE (YoE) COMPARISON RULE:
    - Compute candidate's total professional work experience in years from resume timeline.
-   - Extract required minimum experience from the job posting.
-   - Apply mandatory deductions: Gap 1-2 yrs (-10 pts), Gap 3-4 yrs (-25 pts, max Good Match), Gap 5-7 yrs (-40 pts, Weak Match), Gap 8+ yrs (-55 pts, Unmatched).
+   - Extract required experience range/minimum from the job posting (e.g. "5+ years", "2-4 years").
+   - MANDATORY YOE RULE: IF candidate YOE is below the job's minimum requirement OR if the job description caps YOE (e.g. "2-4 years") and candidate YOE exceeds the upper bound (e.g. candidate has 5 years experience for a 2-4 year role), YOU MUST CLASSIFY THE MATCH LEVEL AS 'Weak Match' (OR 'Unmatched' IF GAP IS 8+ YEARS) AND CAP THE SCORE AT A MAXIMUM OF 55 (range 10-55).
 
 1.b. CRITICAL OVER-QUALIFICATION RULE:
    - If candidate has ~3+ YoE and role is entry-level/new grad/intern, cap score at max 55 (Weak Match/Unmatched).
 
 2. SALARY & LOCATION ALIGNMENT:
+   - MANDATORY SALARY TARGET RULE: If the job posting discloses a salary range where the maximum bound is below the candidate's target minimum salary (e.g. disclosed max is $150K but candidate's target minimum is $200K+), YOU MUST CLASSIFY THE MATCH LEVEL AS 'Weak Match' AND CAP THE SCORE AT A MAXIMUM OF 55.
    - "Seattle, WA" or "WA" is a PERFECT LOCATION MATCH for "Washington".
    - ONLY deduct points for location if the job location matches NONE of the candidate's preferred locations.
 
@@ -2457,6 +2570,46 @@ Return a JSON array of objects, with one entry for each of the ${chunk.length} j
               }
               if (!evalObj.summary || !evalObj.summary.includes("Hard Blocker")) {
                 evalObj.summary = `${hbCheck.reason}. ${evalObj.summary || ''}`;
+              }
+            }
+
+            // YOE & Salary post-processing guardrails
+            const parsedRes = parseResumeDetails(resumeContent, configObj.skills);
+            const candidateYoe = parsedRes.experienceYears || 0;
+            const yoeBounds = extractYoeBounds(`${job.title} ${job.description || ''}`);
+
+            if (!hbCheck.isBlocked) {
+              if (candidateYoe > 0 && yoeBounds.minYoe > 0 && candidateYoe < yoeBounds.minYoe) {
+                evalObj.score = Math.min(evalObj.score || 50, 55);
+                evalObj.match_level = 'Weak Match';
+                if (!Array.isArray(evalObj.reasons)) evalObj.reasons = [];
+                const yoeMsg = `Experience Gap: Candidate YOE (~${candidateYoe} yrs) is below job requirement (${yoeBounds.minYoe}+ yrs) -> Weak Match`;
+                if (!evalObj.reasons.some((r: string) => r.toLowerCase().includes("experience gap") || r.toLowerCase().includes("yoe"))) {
+                  evalObj.reasons.unshift(yoeMsg);
+                }
+              } else if (candidateYoe > 0 && yoeBounds.maxYoe !== undefined && candidateYoe > yoeBounds.maxYoe) {
+                evalObj.score = Math.min(evalObj.score || 50, 55);
+                evalObj.match_level = 'Weak Match';
+                if (!Array.isArray(evalObj.reasons)) evalObj.reasons = [];
+                const yoeMsg = `Over-Qualified YOE Ceiling: Candidate YOE (~${candidateYoe} yrs) exceeds role's maximum experience range (${yoeBounds.minYoe}-${yoeBounds.maxYoe} yrs) -> Weak Match`;
+                if (!evalObj.reasons.some((r: string) => r.toLowerCase().includes("yoe ceiling") || r.toLowerCase().includes("over-qualified"))) {
+                  evalObj.reasons.unshift(yoeMsg);
+                }
+              }
+
+              // Salary target guardrail
+              const targetMinSal = configObj.min_salary || 0;
+              if (targetMinSal > 0 && job.salary && job.salary !== "$Not found") {
+                const maxDisclosed = extractMaxSalaryNumber(job.salary);
+                if (maxDisclosed > 0 && maxDisclosed < targetMinSal) {
+                  evalObj.score = Math.min(evalObj.score || 50, 55);
+                  evalObj.match_level = 'Weak Match';
+                  if (!Array.isArray(evalObj.reasons)) evalObj.reasons = [];
+                  const salMsg = `Below Target Salary: Disclosed max salary ($${maxDisclosed.toLocaleString()}) is below minimum target ($${targetMinSal.toLocaleString()}) -> Weak Match`;
+                  if (!evalObj.reasons.some((r: string) => r.toLowerCase().includes("below target salary"))) {
+                    evalObj.reasons.unshift(salMsg);
+                  }
+                }
               }
             }
 
