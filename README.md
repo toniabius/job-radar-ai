@@ -1,26 +1,27 @@
 # Job Radar AI 🎯
 
-An automated AI-powered job discovery and candidate fit evaluation pipeline built with **React**, **Express**, **TypeScript**, and the **Gemini AI API**.
+An automated AI-powered job discovery and candidate fit evaluation pipeline tailored specifically for **Software Engineering (SWE)** and **technical roles**, built with **React**, **Express**, **TypeScript**, and the **Gemini AI API**.
 
-Job Radar AI systematically scans job boards and ATS platforms for target engineering and product roles, compares candidate resumes against job requirements, and calculates match scores, fit summaries, missing skills, and recommended application actions.
+Job Radar AI systematically scans job boards and ATS platforms for target software engineering and technical roles (e.g. Frontend, Backend, Full Stack, AI/ML, DevOps, Systems), compares candidate resumes against job requirements, and calculates match scores, fit summaries, missing technical skills, and recommended application actions.
 
 ---
 
 ## 🌟 Key Features
 
+- **Tailored for Software Engineering & Tech Roles**: Evaluates candidate fit against technical hiring bars (tech stacks, architecture, scale, system design, and SWE experience levels).
 - **Candidate Profiles & Profile-Scoped Isolation**: Easily save, switch, create, and delete multiple candidate profiles (e.g. for yourself, colleagues, or friends). Switching profiles automatically isolates and switches the candidate's target config, resume, full job inventory (`database/profiles/<profileId>/jobs.db.json`), and scan history reports (`output/profiles/<profileId>/report.md`).
-- **Interactive Candidate Skill Management**: Easily add custom skills via text input, click quick preset buttons (Python, TypeScript, React, Kubernetes, Docker, AWS, GraphQL, System Design, Go, etc.), remove skills, or trigger AI skill re-extraction. Detected skills directly act as scoring factors in both Gemini AI & ATS Heuristic match evaluation.
+- **Interactive Candidate Skill Management**: Easily add custom technical skills via text input, click quick preset buttons (Python, TypeScript, React, Kubernetes, Docker, AWS, GraphQL, System Design, Go, etc.), remove skills, or trigger AI skill re-extraction. Detected skills directly act as scoring factors in both Gemini AI & ATS Heuristic match evaluation.
 - **Unified Config & Profiles Tab**: Merged the Resume and Config tabs into a streamlined **Config & Profiles** view with quick profile switching, candidate profile selection, modal-based profile management, new profile creation, and profile deletion with safety safeguards.
 - **Instant Scan Cancellation**: Click the **Cancel Scan** button at any point during live scanning or AI evaluation to immediately stop the pipeline and abort backend tasks without storing unverified/partial results to your dashboard.
 - **Minimum Score Threshold for Listing Links**: Configure a match score threshold (e.g. `65%`). Scanned reports only include direct job posting links (`🔗 View Job Posting`) for listings meeting or exceeding this match threshold, keeping reports clean and focused on high-fit roles.
 - **PDF Resume Upload & AI Parsing**: Upload PDF resumes directly. Gemini AI automatically extracts contact details, experience, skills, and projects into structured Markdown (`resume.md`).
-- **Flexible Role-Based Search**: Define target role titles (e.g., *Senior Product Engineer*, *Full Stack AI Platform Engineer*).
+- **Flexible Role-Based Search**: Define target software engineering role titles (e.g., *Software Engineer*, *Senior Full Stack Engineer*, *Distributed Systems Engineer*, *AI Platform Engineer*).
 - **Optional Target Companies**: Filter by specific companies and ATS providers (Greenhouse, Lever, Workday, LinkedIn, etc.) or run in **Open Web Search Mode** across all platforms.
 - **Publication Lookback Window**: Configure flexible job publication lookback windows (e.g., *24 Hours*, *3 Days*, *2 Weeks*, *1 Month*) using customizable numbers and time units.
 - **AI-Powered Salary & Compensation Extraction Engine**: Automatically extracts explicitly disclosed base salary ranges or hourly pay rates from job postings using Gemini AI and context-aware regex parsing. Standardizes compensation formats into clean ranges (e.g. `$175,000 - $280,000` or `$80 - $120 / hr`) and marks unlisted compensation as `$Not found` without inserting false guesses.
 - **Salary & Location Filtering**: Filter job opportunities by location preferences (e.g., California, Washington, Remote, Hybrid) and minimum salary targets. Disclosed maximum salaries below the candidate's minimum target automatically cap the evaluation score at 55 (**Weak Match**).
 - **Experience (YOE) Range & Ceiling Guardrails**: Parses both minimum required experience and upper-bound ceilings (e.g., "2-4 years"). Automatically flags experience gaps or over-qualification exceeding role upper bounds as **Weak Match** (max score 55).
-- **Hard Blockers & Criteria to Avoid**: Configure strict dealbreaker filters (e.g., Security Clearance, Contractor/1099 roles, Recruiting/Staffing agencies, Data Engineer / Data Architect / Test Engineer roles, 5-day On-site) to penalize and eliminate non-matching positions.
+- **Hard Blockers & Criteria to Avoid**: Configure strict dealbreaker filters (e.g., Security Clearance, Contractor/1099 roles, Recruiting/Staffing agencies, non-SWE specialized roles like Data Architect or Test Engineer, 5-day On-site) to penalize and eliminate non-matching positions.
 - **Database Viewer & Multi-Column Sorting**: Dedicated full job inventory view offering live search, multi-column sorting by **Match Score** (High to Low / Low to High), **First Seen Date**, **Job Title**, or **Company Name**, applied status filtering, single-click **AI Evaluate** for pending jobs, and **Evaluate All Pending** batch evaluation.
 - **Scan Progress Console & Reports**: Terminal modal interface displaying live job discovery steps, resume parsing status, and Gemini evaluation outputs. Formatted report view supports styled external application links.
 - **Saved Jobs & Status Tracking**: Bookmark favorites, filter qualified matches (Score ≥ 60%), mark application status (Applied / Interviewing / Offer / Saved), and export reports.
@@ -136,3 +137,9 @@ resume/*
    - Customize **Preferred Locations** and **Salary Range**.
 3. **Execute or Cancel Pipeline**: Click **"Scan"** in top navigation to launch scanning. If started by mistake, click **"Cancel Scan"** to halt processing immediately.
 4. **Review Matched Jobs & Reports**: Inspect match scores, missing skill gaps, and direct listing links in the **Scan History** tab.
+
+---
+
+## 📄 License
+
+Personal, non-commercial use only. See [LICENSE](./LICENSE) for details.

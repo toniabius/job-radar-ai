@@ -262,13 +262,23 @@ export default function App() {
     }
   };
 
-  // Evaluate all pending jobs in fast AI batches
-  const handleEvaluateAllJobs = async () => {
+  // Evaluate pending or selected jobs in fast AI batches
+  const handleEvaluateAllJobs = async (selectedJobIds?: string[]) => {
     setIsBulkEvaluating(true);
     try {
-      const pendingJobs = jobs.filter((j) => j.score === undefined);
-      const jobsToEval = pendingJobs.length > 0 ? pendingJobs : jobs;
-      const jobIds = jobsToEval.map((j) => j.id);
+      let jobIds: string[] = [];
+      if (Array.isArray(selectedJobIds) && selectedJobIds.length > 0) {
+        jobIds = selectedJobIds;
+      } else {
+        const pendingJobs = jobs.filter((j) => j.score === undefined);
+        const jobsToEval = pendingJobs.length > 0 ? pendingJobs : jobs;
+        jobIds = jobsToEval.map((j) => j.id);
+      }
+
+      if (jobIds.length === 0) {
+        setIsBulkEvaluating(false);
+        return;
+      }
 
       const res = await fetch('/api/jobs/evaluate-batch', {
         method: 'POST',
@@ -327,6 +337,26 @@ export default function App() {
       }
     } catch (err) {
       console.error('Error deleting job:', err);
+      await fetchJobs();
+    }
+  };
+
+  // Delete Selected Jobs
+  const handleDeleteSelectedJobs = async (selectedJobIds: string[]) => {
+    if (!selectedJobIds || selectedJobIds.length === 0) return;
+    const selectedSet = new Set(selectedJobIds);
+    setJobs((prev) => prev.filter((j) => !selectedSet.has(j.id)));
+    if (selectedJob && selectedSet.has(selectedJob.id)) {
+      setSelectedJob(null);
+    }
+
+    try {
+      await Promise.all(
+        selectedJobIds.map((id) => fetch(`/api/jobs/${id}`, { method: 'DELETE' }))
+      );
+      await fetchReport();
+    } catch (err) {
+      console.error('Error deleting selected jobs:', err);
       await fetchJobs();
     }
   };
@@ -952,10 +982,12 @@ export default function App() {
             minimumScoreThreshold={minScoreThreshold}
             onResetDatabase={handleResetDatabase}
             onDeleteJob={handleDeleteJob}
+            onDeleteSelectedJobs={handleDeleteSelectedJobs}
             onDeleteBelowThreshold={handleDeleteJobsBelowThreshold}
             onToggleApplied={handleToggleApplied}
             onEvaluateJob={handleEvaluateJob}
             onEvaluateAllJobs={handleEvaluateAllJobs}
+            onEvaluateSelectedJobs={handleEvaluateAllJobs}
             evaluatingJobId={evaluatingJobId}
             isBulkEvaluating={isBulkEvaluating}
           />
