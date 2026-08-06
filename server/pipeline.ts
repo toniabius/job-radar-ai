@@ -23,6 +23,30 @@ export function setPipelineCancelled(cancelled: boolean): void {
   activePipelineCancelled = cancelled;
 }
 
+export function setIsPipelineRunning(running: boolean): void {
+  isPipelineRunning = running;
+  if (running) {
+    activePipelineCancelled = false;
+  }
+}
+
+export function appendPipelineLog(stage: PipelineLog["stage"], message: string, details?: string): void {
+  const entry: PipelineLog = {
+    id: Math.random().toString(36).substring(7),
+    timestamp: new Date().toLocaleTimeString(),
+    stage,
+    message,
+    details,
+  };
+  currentPipelineLogs.push(entry);
+  try {
+    const logsPath = getProfileLogsPath();
+    fs.writeFileSync(logsPath, JSON.stringify(currentPipelineLogs, null, 2), "utf-8");
+  } catch (e) {
+    // ignore
+  }
+}
+
 export function clearPipelineLogs(): void {
   currentPipelineLogs = [];
   currentPipelineResult = null;

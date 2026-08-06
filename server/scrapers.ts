@@ -263,6 +263,28 @@ export async function fetchLiveLinkedInJobs(
                 console.error(`[JD FETCH] Exception fetching job description for ${card.jobId}:`, fetchErr);
               }
 
+              const isClosedJob =
+                /no longer accepting applications/i.test(rawHtml) ||
+                /no longer accepting applications/i.test(fullDescription) ||
+                /no longer taking applications/i.test(rawHtml) ||
+                /position is closed/i.test(rawHtml) ||
+                /position closed/i.test(rawHtml) ||
+                /job is closed/i.test(rawHtml) ||
+                /job is no longer available/i.test(rawHtml) ||
+                /this job has expired/i.test(rawHtml) ||
+                /posting expired/i.test(rawHtml) ||
+                /application closed/i.test(rawHtml) ||
+                /no longer active/i.test(rawHtml) ||
+                /this listing is closed/i.test(rawHtml) ||
+                /this position is no longer accepting applications/i.test(rawHtml);
+
+              if (isClosedJob) {
+                if (addLog) {
+                  addLog("SCANNER", `Skipped closed/expired job: "${card.jobTitle}" @ ${card.rawComp} (No longer accepting applications).`);
+                }
+                continue;
+              }
+
               fetchedCardsData.push({ card, fullDescription, rawHtml });
             }
 

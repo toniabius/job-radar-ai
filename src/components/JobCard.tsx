@@ -112,7 +112,7 @@ export const JobCard: React.FC<JobCardProps> = ({
               className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
             />
             <span className={`text-xs font-bold ${job.applied ? 'text-emerald-700' : 'text-slate-600'}`}>
-              {job.applied ? '✓ Applied' : 'Applied?'}
+              {job.applied ? 'Applied' : 'Applied?'}
             </span>
           </label>
           {job.applied && job.applied_date && (

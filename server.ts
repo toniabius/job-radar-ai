@@ -34,6 +34,7 @@ import {
 import {
   evaluateJobWithGemini,
   batchEvaluateJobsWithGemini,
+  sanitizeJobEvaluation,
 } from "./server/evaluator.js";
 import { generateMarkdownReport } from "./server/reporter.js";
 import {
@@ -41,6 +42,9 @@ import {
   getPipelineLogsData,
   clearPipelineLogs,
   setPipelineCancelled,
+  appendPipelineLog,
+  setIsPipelineRunning,
+  activePipelineCancelled,
 } from "./server/pipeline.js";
 import {
   hasValidApiKey,
@@ -503,7 +507,7 @@ app.post("/api/jobs/evaluate", async (req, res) => {
 
     const evalData = await evaluateJobWithGemini(jobToEval, resumeText, configObj);
 
-    const updatedJob: Job = {
+    let updatedJob: Job = {
       ...jobToEval,
       score: evalData.score,
       match_level: evalData.match_level,
@@ -515,6 +519,8 @@ app.post("/api/jobs/evaluate", async (req, res) => {
       processed_at: new Date().toISOString(),
       status: "evaluated",
     };
+
+    updatedJob = sanitizeJobEvaluation(updatedJob, configObj.locations || [], configObj);
 
     const updatedJobsList = allJobs.map((j) => (j.id === updatedJob.id ? updatedJob : j));
     if (!allJobs.some((j) => j.id === updatedJob.id)) {
@@ -549,24 +555,54 @@ app.post("/api/jobs/evaluate-batch", async (req, res) => {
       return res.json({ success: true, evaluatedCount: 0, jobs: allJobs });
     }
 
-    const evalResults = await batchEvaluateJobsWithGemini(jobsToEval, resumeObj.content, configObj);
-    const updatedMap = new Map<string, Job>();
+    clearPipelineLogs();
+    setIsPipelineRunning(true);
 
-    for (const item of evalResults) {
-      const orig = jobsToEval.find((j) => j.id === item.jobId);
-      if (orig) {
-        updatedMap.set(item.jobId, {
-          ...orig,
-          score: item.evaluation.score,
-          match_level: item.evaluation.match_level,
-          summary: item.evaluation.summary,
-          reasons: item.evaluation.reasons,
-          missing_skills: item.evaluation.missing_skills,
-          recommended_actions: item.evaluation.recommended_actions,
-          model_used: item.evaluation.model_used,
-          processed_at: new Date().toISOString(),
-          status: "evaluated",
-        });
+    const totalToEval = jobsToEval.length;
+    appendPipelineLog("GEMINI_AI", `Starting AI Re-Evaluation for ${totalToEval} job(s)...`);
+
+    const BATCH_SIZE = 5;
+    const updatedMap = new Map<string, Job>();
+    let evaluatedCount = 0;
+
+    for (let i = 0; i < jobsToEval.length; i += BATCH_SIZE) {
+      if (activePipelineCancelled) {
+        appendPipelineLog("GEMINI_AI", "Re-evaluation cancelled by user.");
+        break;
+      }
+      const chunk = jobsToEval.slice(i, i + BATCH_SIZE);
+      const chunkTitles = chunk.map((j) => `"${j.title}" @ ${j.company}`).join(", ");
+      appendPipelineLog(
+        "GEMINI_AI",
+        `Evaluating batch (${i + 1}-${Math.min(i + chunk.length, totalToEval)}/${totalToEval}): ${chunkTitles}...`
+      );
+
+      const evalResults = await batchEvaluateJobsWithGemini(chunk, resumeObj.content, configObj);
+
+      for (const item of evalResults) {
+        const orig = chunk.find((j) => j.id === item.jobId);
+        if (orig) {
+          let updatedJob: Job = {
+            ...orig,
+            score: item.evaluation.score,
+            match_level: item.evaluation.match_level,
+            summary: item.evaluation.summary,
+            reasons: item.evaluation.reasons,
+            missing_skills: item.evaluation.missing_skills,
+            recommended_actions: item.evaluation.recommended_actions,
+            model_used: item.evaluation.model_used,
+            processed_at: new Date().toISOString(),
+            status: "evaluated",
+          };
+          updatedJob = sanitizeJobEvaluation(updatedJob, configObj.locations || [], configObj);
+          updatedMap.set(item.jobId, updatedJob);
+          evaluatedCount++;
+
+          appendPipelineLog(
+            "GEMINI_AI",
+            `[EVAL DONE] (${evaluatedCount}/${totalToEval}) "${updatedJob.title}" @ ${updatedJob.company} -> Score: ${updatedJob.score}/100 [${updatedJob.match_level}]`
+          );
+        }
       }
     }
 
@@ -574,9 +610,14 @@ app.post("/api/jobs/evaluate-batch", async (req, res) => {
     saveJobsDB(updatedJobsList);
     generateMarkdownReport(updatedJobsList);
 
+    appendPipelineLog("GEMINI_AI", `[STAGE COMPLETE] AI Re-Evaluation completed for ${evaluatedCount}/${totalToEval} job(s).`);
+    setIsPipelineRunning(false);
+
     return res.json({ success: true, evaluatedCount: updatedMap.size, jobs: updatedJobsList });
   } catch (error: any) {
     console.error("Batch evaluation error:", error);
+    appendPipelineLog("GEMINI_AI", `[ERROR] Batch evaluation error: ${error.message}`);
+    setIsPipelineRunning(false);
     return res.status(500).json({ error: error.message || "Failed to batch evaluate jobs" });
   }
 });

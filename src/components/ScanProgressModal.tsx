@@ -9,6 +9,7 @@ interface ScanProgressModalProps {
   isRunning: boolean;
   logs: PipelineLog[];
   geminiModel?: string;
+  mode?: 'scan' | 'reeval';
   scanResult?: {
     newJobsCount?: number;
     evaluatedCount?: number;
@@ -23,6 +24,7 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
   onCancel,
   isRunning,
   logs,
+  mode = 'scan',
   scanResult,
 }) => {
   const [showLogs, setShowLogs] = useState<boolean>(true);
@@ -116,10 +118,22 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
             </div>
             <div>
               <h3 className="font-bold text-base tracking-tight">
-                {isRunning ? 'Job Radar Scanner Running...' : 'Scan Complete'}
+                {isRunning
+                  ? mode === 'reeval'
+                    ? 'AI Re-Evaluation Running...'
+                    : 'Job Radar Scanner Running...'
+                  : mode === 'reeval'
+                  ? 'Re-Evaluation Complete'
+                  : 'Scan Complete'}
               </h3>
               <p className="text-xs text-slate-400">
-                {isRunning ? 'Discovering & evaluating listings in real-time' : 'Latest jobs & AI scores updated'}
+                {isRunning
+                  ? mode === 'reeval'
+                    ? 'Re-evaluating job match scores with Gemini AI'
+                    : 'Discovering & evaluating listings in real-time'
+                  : mode === 'reeval'
+                  ? 'Match scores & evaluation breakdown updated'
+                  : 'Latest jobs & AI scores updated'}
               </p>
             </div>
           </div>
@@ -143,7 +157,13 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
                 <div className="flex items-center space-x-2">
                   <Sparkles className="w-4 h-4 text-emerald-400" />
                   <span className="font-bold text-sm text-slate-100">
-                    {evalProgress ? 'AI Gemini Evaluation Phase' : 'Scanning Job Listings Phase'}
+                    {evalProgress
+                      ? mode === 'reeval'
+                        ? 'AI Gemini Re-Evaluation Phase'
+                        : 'AI Gemini Evaluation Phase'
+                      : mode === 'reeval'
+                      ? 'Preparing Job Evaluation Batch'
+                      : 'Scanning Job Listings Phase'}
                   </span>
                 </div>
                 {evalProgress && (
@@ -160,33 +180,51 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
                 </p>
               ) : (
                 <p className="text-[11px] text-slate-300 font-mono">
-                  <span className="text-blue-400 font-semibold">Status:</span> Scanning jobs from LinkedIn...
+                  <span className="text-blue-400 font-semibold">Status:</span>{' '}
+                  {mode === 'reeval' ? 'Initializing AI batch evaluation...' : 'Scanning jobs from LinkedIn...'}
                 </p>
               )}
             </div>
           )}
 
-          {/* Scan Results Metrics (if completed) */}
+          {/* Results Metrics (if completed) */}
           {!isRunning && scanResult && (
             <div className="bg-emerald-50 border border-emerald-200/80 rounded-xl p-4 text-xs space-y-3">
               <div className="flex items-center space-x-2 text-emerald-900 font-bold text-sm">
                 <Sparkles className="w-4 h-4 text-emerald-600" />
-                <span>Scan Results Summary</span>
+                <span>{mode === 'reeval' ? 'Re-Evaluation Results Summary' : 'Scan Results Summary'}</span>
               </div>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="bg-white p-2.5 rounded-lg border border-emerald-100 shadow-sm">
-                  <div className="text-lg font-bold text-slate-900">{scanResult.newJobsCount ?? 0}</div>
-                  <div className="text-[11px] text-slate-500 font-medium">New Jobs Found</div>
+              {mode === 'reeval' ? (
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-white p-2.5 rounded-lg border border-emerald-100 shadow-sm">
+                    <div className="text-lg font-bold text-emerald-600">{scanResult.evaluatedCount ?? 0}</div>
+                    <div className="text-[11px] text-slate-500 font-medium">Jobs Re-Evaluated</div>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-emerald-100 shadow-sm">
+                    <div className="text-lg font-bold text-slate-900">{scanResult.totalJobs ?? 0}</div>
+                    <div className="text-[11px] text-slate-500 font-medium">Total Inventory</div>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-emerald-100 shadow-sm">
+                    <div className="text-lg font-bold text-emerald-600">100%</div>
+                    <div className="text-[11px] text-slate-500 font-medium">Gemini AI</div>
+                  </div>
                 </div>
-                <div className="bg-white p-2.5 rounded-lg border border-emerald-100 shadow-sm">
-                  <div className="text-lg font-bold text-emerald-600">{scanResult.evaluatedCount ?? 0}</div>
-                  <div className="text-[11px] text-slate-500 font-medium font-medium">AI Evaluated</div>
+              ) : (
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-white p-2.5 rounded-lg border border-emerald-100 shadow-sm">
+                    <div className="text-lg font-bold text-slate-900">{scanResult.newJobsCount ?? 0}</div>
+                    <div className="text-[11px] text-slate-500 font-medium">New Jobs Found</div>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-emerald-100 shadow-sm">
+                    <div className="text-lg font-bold text-emerald-600">{scanResult.evaluatedCount ?? 0}</div>
+                    <div className="text-[11px] text-slate-500 font-medium">AI Evaluated</div>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-emerald-100 shadow-sm">
+                    <div className="text-lg font-bold text-slate-900">{scanResult.totalJobs ?? 0}</div>
+                    <div className="text-[11px] text-slate-500 font-medium">Total Inventory</div>
+                  </div>
                 </div>
-                <div className="bg-white p-2.5 rounded-lg border border-emerald-100 shadow-sm">
-                  <div className="text-lg font-bold text-slate-900">{scanResult.totalJobs ?? 0}</div>
-                  <div className="text-[11px] text-slate-500 font-medium">Total Inventory</div>
-                </div>
-              </div>
+              )}
               {scanResult.summary && (
                 <p className="text-emerald-800 text-xs bg-white/60 p-2.5 rounded-lg border border-emerald-100">
                   {scanResult.summary}
@@ -241,14 +279,14 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
               className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold inline-flex items-center space-x-1.5 transition-all shadow-sm active:scale-95"
             >
               <XCircle className="w-4 h-4" />
-              <span>Cancel Scan</span>
+              <span>{mode === 'reeval' ? 'Cancel Re-Eval' : 'Cancel Scan'}</span>
             </button>
           ) : (
             <button
               onClick={onClose}
               className="px-5 py-2 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 shadow-md shadow-emerald-600/20 transition-all"
             >
-              Done & View Dashboard
+              {mode === 'reeval' ? 'Done & Close' : 'Done & View Dashboard'}
             </button>
           )}
         </div>

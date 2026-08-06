@@ -264,16 +264,15 @@ export function loadJobsDB(profileId?: string): Job[] {
     jobs = pid === "default" ? SAMPLE_JOBS : [];
   }
 
-  if (config.locations && config.locations.length > 0) {
-    return jobs.map((j) => sanitizeJobEvaluation(j, config.locations));
-  }
-  return jobs;
+  return jobs.map((j) => sanitizeJobEvaluation(j, config.locations || [], config));
 }
 
 export function saveJobsDB(jobs: Job[], profileId?: string): void {
   const pid = profileId || getActiveProfileId();
+  const config = loadConfig();
+  const sanitizedJobs = jobs.map((j) => sanitizeJobEvaluation(j, config.locations || [], config));
   const profilePath = getProfileJobsPath(pid);
-  const content = JSON.stringify(jobs, null, 2);
+  const content = JSON.stringify(sanitizedJobs, null, 2);
 
   writeFileIfChanged(profilePath, content);
 

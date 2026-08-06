@@ -50,6 +50,8 @@ export interface AppConfig {
   auto_evaluate: boolean;
   gemini_model?: string;
   max_jobs_per_company: number;
+  company_size_filter?: 'any' | 'startup' | 'midsize' | 'enterprise';
+  company_size_min?: number;
   hard_blockers?: string;
 }
 

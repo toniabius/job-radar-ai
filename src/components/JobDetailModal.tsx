@@ -57,11 +57,17 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
                 <input
                   type="checkbox"
                   checked={job.applied || false}
-                  onChange={(e) => onToggleApplied(job, e.target.checked)}
+                  onChange={(e) => {
+                    const isChecked = e.target.checked;
+                    onToggleApplied(job, isChecked);
+                    if (isChecked) {
+                      onClose();
+                    }
+                  }}
                   className="w-4 h-4 text-emerald-500 rounded border-slate-600 bg-slate-900 focus:ring-emerald-500 cursor-pointer"
                 />
                 <span className={`text-xs font-semibold ${job.applied ? 'text-emerald-400' : 'text-slate-300'}`}>
-                  {job.applied ? '✓ Applied' : 'Applied?'}
+                  {job.applied ? 'Applied' : 'Applied?'}
                 </span>
               </label>
             )}

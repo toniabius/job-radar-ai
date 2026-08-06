@@ -25,6 +25,7 @@ export default function App() {
   const [pipelineLogs, setPipelineLogs] = useState<PipelineLog[]>([]);
   const [isRunningPipeline, setIsRunningPipeline] = useState<boolean>(false);
   const [isScanModalOpen, setIsScanModalOpen] = useState<boolean>(false);
+  const [scanModalMode, setScanModalMode] = useState<'scan' | 'reeval'>('scan');
   const [lastScanResult, setLastScanResult] = useState<{
     newJobsCount?: number;
     evaluatedCount?: number;
@@ -34,6 +35,8 @@ export default function App() {
   } | null>(null);
   const [evaluatingJobId, setEvaluatingJobId] = useState<string | null>(null);
   const [isBulkEvaluating, setIsBulkEvaluating] = useState<boolean>(false);
+  const [bulkEvalProgress, setBulkEvalProgress] = useState<{ current: number; total: number } | null>(null);
+  const bulkEvalAbortControllerRef = useRef<AbortController | null>(null);
   const [lastRunTime, setLastRunTime] = useState<string | undefined>(undefined);
 
   // Modals & Selections
@@ -187,6 +190,7 @@ export default function App() {
 
   // Run Pipeline (`python run.py`)
   const handleRunPipeline = async () => {
+    setScanModalMode('scan');
     setIsScanModalOpen(true);
     setIsRunningPipeline(true);
     setPipelineLogs([]); // Clear logs from UI for fresh scan run
@@ -262,9 +266,26 @@ export default function App() {
     }
   };
 
+  // Cancel Bulk Re-Evaluation
+  const handleCancelBulkEval = async () => {
+    if (bulkEvalAbortControllerRef.current) {
+      bulkEvalAbortControllerRef.current.abort();
+      bulkEvalAbortControllerRef.current = null;
+    }
+    try {
+      await fetch('/api/pipeline/cancel', { method: 'POST' });
+    } catch (err) {
+      console.warn('Cancel bulk eval request note:', err);
+    }
+    setIsBulkEvaluating(false);
+    setBulkEvalProgress(null);
+    await fetchJobs();
+  };
+
   // Evaluate pending or selected jobs in fast AI batches
   const handleEvaluateAllJobs = async (selectedJobIds?: string[]) => {
     setIsBulkEvaluating(true);
+
     try {
       let jobIds: string[] = [];
       if (Array.isArray(selectedJobIds) && selectedJobIds.length > 0) {
@@ -280,24 +301,66 @@ export default function App() {
         return;
       }
 
-      const res = await fetch('/api/jobs/evaluate-batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobIds }),
-      });
+      const totalToEval = jobIds.length;
+      setBulkEvalProgress({ current: 0, total: totalToEval });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.jobs) {
-          setJobs(data.jobs);
+      const controller = new AbortController();
+      bulkEvalAbortControllerRef.current = controller;
+
+      // Poll pipeline logs for real-time progress
+      const pollInterval = setInterval(async () => {
+        try {
+          const res = await fetch('/api/pipeline/logs');
+          if (res.ok) {
+            const data = await res.json();
+            if (data.logs && Array.isArray(data.logs)) {
+              for (let i = data.logs.length - 1; i >= 0; i--) {
+                const msg = data.logs[i].message || '';
+                const match = msg.match(/\[EVAL DONE\]\s*\((\d+)\/(\d+)\)/);
+                if (match) {
+                  const curr = parseInt(match[1], 10);
+                  const tot = parseInt(match[2], 10);
+                  setBulkEvalProgress({ current: curr, total: tot });
+                  break;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          // ignore
         }
-        await fetchReport();
+      }, 800);
+
+      try {
+        const res = await fetch('/api/jobs/evaluate-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobIds }),
+          signal: controller.signal,
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.jobs) {
+            setJobs(data.jobs);
+          }
+          await fetchReport();
+        }
+      } finally {
+        clearInterval(pollInterval);
       }
-    } catch (err) {
-      console.error('Batch evaluation error:', err);
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log('Batch evaluation cancelled by user.');
+      } else {
+        console.error('Batch evaluation error:', err);
+      }
     } finally {
       setEvaluatingJobId(null);
       setIsBulkEvaluating(false);
+      setBulkEvalProgress(null);
+      bulkEvalAbortControllerRef.current = null;
+      await fetchJobs();
     }
   };
 
@@ -990,6 +1053,8 @@ export default function App() {
             onEvaluateSelectedJobs={handleEvaluateAllJobs}
             evaluatingJobId={evaluatingJobId}
             isBulkEvaluating={isBulkEvaluating}
+            bulkEvalProgress={bulkEvalProgress}
+            onCancelBulkEval={handleCancelBulkEval}
           />
         )}
 
@@ -1060,6 +1125,7 @@ export default function App() {
         isRunning={isRunningPipeline}
         logs={pipelineLogs}
         geminiModel={config?.gemini_model}
+        mode={scanModalMode}
         scanResult={lastScanResult}
       />
     </div>

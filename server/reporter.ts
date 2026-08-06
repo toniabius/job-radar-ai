@@ -16,9 +16,7 @@ export function generateMarkdownReport(jobs: Job[], profileId?: string): string 
   const config = loadConfig();
   const minThreshold = config.minimum_score || 65;
 
-  const sanitizedJobs = config.locations && config.locations.length > 0
-    ? jobs.map((j) => sanitizeJobEvaluation(j, config.locations))
-    : jobs;
+  const sanitizedJobs = jobs.map((j) => sanitizeJobEvaluation(j, config.locations || [], config));
 
   const evaluatedJobs = sanitizedJobs.filter((j) => j.status === "evaluated" || j.score !== undefined);
   const strongMatches = evaluatedJobs.filter((j) => (j.score || 0) >= 80);

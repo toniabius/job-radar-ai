@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Database, Search, RefreshCw, Trash2, RotateCcw, ExternalLink, Sparkles, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Database, Search, RefreshCw, Trash2, RotateCcw, ExternalLink, Sparkles, ArrowUpDown, ArrowUp, ArrowDown, XCircle } from 'lucide-react';
 import { Job } from '../types';
 import { ensureAbsoluteUrl } from '../utils/url';
 
@@ -17,6 +17,8 @@ interface DatabaseViewerProps {
   onEvaluateSelectedJobs?: (selectedJobIds: string[]) => void;
   evaluatingJobId?: string | null;
   isBulkEvaluating?: boolean;
+  bulkEvalProgress?: { current: number; total: number } | null;
+  onCancelBulkEval?: () => void;
 }
 
 export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
@@ -33,6 +35,8 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
   onEvaluateSelectedJobs,
   evaluatingJobId,
   isBulkEvaluating,
+  bulkEvalProgress,
+  onCancelBulkEval,
 }) => {
   const [search, setSearch] = useState('');
   const [appliedFilter, setAppliedFilter] = useState<'ALL' | 'APPLIED' | 'PENDING'>('ALL');
@@ -451,11 +455,33 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
               </p>
             </div>
             <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200">
-              <div className="bg-gradient-to-r from-amber-500 via-emerald-500 to-amber-500 h-full w-full animate-pulse" />
+              <div
+                className="bg-gradient-to-r from-amber-500 via-emerald-500 to-amber-500 h-full transition-all duration-300"
+                style={{
+                  width:
+                    bulkEvalProgress && bulkEvalProgress.total > 0
+                      ? `${Math.min(100, Math.round((bulkEvalProgress.current / bulkEvalProgress.total) * 100))}%`
+                      : '100%',
+                }}
+              />
             </div>
             <p className="text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200/80 rounded-lg py-2 px-3">
-              ⚡ Evaluating match scores for selected job postings with Gemini AI...
+              ⚡ Evaluating match scores for selected job postings with Gemini AI{' '}
+              {bulkEvalProgress ? `${bulkEvalProgress.current}/${bulkEvalProgress.total}` : ''}...
             </p>
+
+            {onCancelBulkEval && (
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={onCancelBulkEval}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold inline-flex items-center space-x-1.5 transition-all shadow-sm active:scale-95 cursor-pointer"
+                >
+                  <XCircle className="w-4 h-4" />
+                  <span>Cancel Re-Evaluation</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

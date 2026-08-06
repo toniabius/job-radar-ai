@@ -15,60 +15,232 @@ import {
   ALL_GEMINI_FALLBACK_MODELS,
 } from "./gemini.js";
 
-export function sanitizeJobEvaluation(job: Job, preferredLocations: string[]): Job {
-  if (!job || !preferredLocations || preferredLocations.length === 0) return job;
-  const isLocMatch = isLocationMatch(job.location, preferredLocations);
-  if (!isLocMatch) return job;
+export function sanitizeJobEvaluation(job: Job, preferredLocations: string[], configObj?: AppConfig): Job {
+  if (!job) return job;
+  const config = configObj || loadConfig();
+  const prefLocs = preferredLocations || config.locations || [];
 
-  const locMismatchPattern = /location mismatch|prefers.*washington dc|role is (in|based in).*wa|candidate's current location and preference mismatch|geographic distance|conflicts with the candidate's preference/i;
+  let cleanedReasons = job.reasons || [];
+  let cleanedMissing = job.missing_skills || [];
+  let cleanedSummary = job.summary || "";
 
-  let cleanedReasons = job.reasons;
-  if (Array.isArray(cleanedReasons)) {
-    cleanedReasons = cleanedReasons.filter((r) => !locMismatchPattern.test(r));
-  }
+  if (prefLocs.length > 0 && isLocationMatch(job.location, prefLocs)) {
+    const locMismatchPattern = /location mismatch|prefers.*washington dc|role is (in|based in).*wa|candidate's current location and preference mismatch|geographic distance|conflicts with the candidate's preference/i;
 
-  let cleanedMissing = job.missing_skills;
-  if (Array.isArray(cleanedMissing)) {
-    cleanedMissing = cleanedMissing.filter((m) => !locMismatchPattern.test(m));
-  }
-
-  let cleanedSummary = job.summary;
-  if (cleanedSummary) {
-    const sentences = cleanedSummary.split(/(?<=[.!?])\s+/);
-    const validSentences = sentences.filter((s) => {
-      const lower = s.toLowerCase();
-      if (
-        (lower.includes("bellevue") || lower.includes("seattle") || lower.includes("washington dc") || lower.includes("location") || lower.includes("geographic")) &&
-        (lower.includes("conflict") || lower.includes("mismatch") || lower.includes("distance") || lower.includes("prefers") || lower.includes("impacts"))
-      ) {
-        return false;
+    if (Array.isArray(cleanedReasons)) {
+      cleanedReasons = cleanedReasons.filter((r) => !locMismatchPattern.test(r));
+    }
+    if (Array.isArray(cleanedMissing)) {
+      cleanedMissing = cleanedMissing.filter((m) => !locMismatchPattern.test(m));
+    }
+    if (cleanedSummary) {
+      const sentences = cleanedSummary.split(/(?<=[.!?])\s+/);
+      const validSentences = sentences.filter((s) => {
+        const lower = s.toLowerCase();
+        if (
+          (lower.includes("bellevue") || lower.includes("seattle") || lower.includes("washington dc") || lower.includes("location") || lower.includes("geographic")) &&
+          (lower.includes("conflict") || lower.includes("mismatch") || lower.includes("distance") || lower.includes("prefers") || lower.includes("impacts"))
+        ) {
+          return false;
+        }
+        if (lower.includes("location mismatch")) return false;
+        return true;
+      });
+      cleanedSummary = validSentences.join(" ").trim();
+      if (!cleanedSummary && job.title && job.company) {
+        cleanedSummary = `${job.title} at ${job.company} (${job.location}) aligns well with candidate profile and target requirements.`;
       }
-      if (lower.includes("location mismatch")) return false;
-      return true;
-    });
-    cleanedSummary = validSentences.join(" ").trim();
-    if (!cleanedSummary && job.title && job.company) {
-      cleanedSummary = `${job.title} at ${job.company} (${job.location}) aligns well with candidate profile and target requirements.`;
     }
   }
 
   let newScore = job.score;
   let newMatchLevel: 'Strong Match' | 'Good Match' | 'Weak Match' | 'Unmatched' | undefined = job.match_level;
 
-  if (newScore !== undefined && newScore < 80) {
-    const hasHardBlocker =
-      cleanedMissing?.some((m) => m.toLowerCase().includes("hard blocker")) ||
-      cleanedReasons?.some((r) => r.toLowerCase().includes("hard blocker"));
-    const hasYoeGap =
-      cleanedMissing?.some((m) => m.toLowerCase().includes("experience gap") || m.toLowerCase().includes("yoe")) ||
-      cleanedReasons?.some((r) => r.toLowerCase().includes("experience gap"));
-    const hasOverQual =
-      cleanedMissing?.some((m) => m.toLowerCase().includes("over-qualification")) ||
-      cleanedReasons?.some((r) => r.toLowerCase().includes("over-qualification"));
+  const hasHardBlocker =
+    cleanedMissing.some((m) => m.toLowerCase().includes("hard blocker")) ||
+    cleanedReasons.some((r) => r.toLowerCase().includes("hard blocker"));
 
-    if (!hasHardBlocker && !hasYoeGap && !hasOverQual) {
+  const hasYoeGap =
+    cleanedMissing.some((m) => m.toLowerCase().includes("experience gap") || m.toLowerCase().includes("yoe")) ||
+    cleanedReasons.some((r) => r.toLowerCase().includes("experience gap"));
+
+  const hasOverQual =
+    cleanedMissing.some((m) => m.toLowerCase().includes("over-qualification")) ||
+    cleanedReasons.some((r) => r.toLowerCase().includes("over-qualification"));
+
+  const targetMinSalary = config.min_salary || 0;
+  let isSalaryBelow = false;
+  let salaryBelowNote = "";
+
+  const salaryTextOnly = (job.salary && job.salary !== "$Not found")
+    ? job.salary
+    : (extractSalaryWithRegex(job.description || "") || "");
+
+  const isHourlySalary =
+    /\b(?:hr|hour|hourly|\/hr)\b/i.test(salaryTextOnly) ||
+    /\/\s*hr\b/i.test(salaryTextOnly) ||
+    /\bper hour\b/i.test(salaryTextOnly) ||
+    /\b(?:hr|hour|hourly|\/hr)\b/i.test(job.salary || "") ||
+    /\/\s*hr\b/i.test(job.salary || "");
+
+  const isUndisclosedSalary =
+    !salaryTextOnly ||
+    salaryTextOnly === "$Not found" ||
+    salaryTextOnly.toLowerCase().includes("not found") ||
+    salaryTextOnly.toLowerCase().includes("not disclosed");
+
+  let maxDisclosed = 0;
+  if (!isHourlySalary && !isUndisclosedSalary) {
+    maxDisclosed = extractMaxSalaryNumber(salaryTextOnly);
+  }
+
+  if (!isHourlySalary && !isUndisclosedSalary && targetMinSalary > 0 && maxDisclosed > 0) {
+    if (maxDisclosed < targetMinSalary) {
+      isSalaryBelow = true;
+      salaryBelowNote = `Below Target Salary (Weak Match): Disclosed annual high range ($${maxDisclosed.toLocaleString()}) is below minimum target ($${targetMinSalary.toLocaleString()})`;
+    }
+  }
+
+  if (!isSalaryBelow) {
+    const invalidSalaryPattern = /below.*target|target.*minimum|salary.*below|compensation.*below|falls below|\/hr.*target|rate.*below|compensation range.*below|lower end|lower-end|lower bound/i;
+
+    if (Array.isArray(cleanedReasons)) {
+      cleanedReasons = cleanedReasons.filter((r) => {
+        const lower = r.toLowerCase();
+        if (invalidSalaryPattern.test(r)) return false;
+        if ((lower.includes("salary") || lower.includes("compensation") || lower.includes("rate") || lower.includes("pay")) &&
+            (lower.includes("below") || lower.includes("under") || lower.includes("lower") || lower.includes("mismatch"))) {
+          return false;
+        }
+        return true;
+      });
+    }
+
+    if (Array.isArray(cleanedMissing)) {
+      cleanedMissing = cleanedMissing.filter((m) => {
+        const lower = m.toLowerCase();
+        if (invalidSalaryPattern.test(m)) return false;
+        if ((lower.includes("salary") || lower.includes("compensation") || lower.includes("rate") || lower.includes("pay")) &&
+            (lower.includes("below") || lower.includes("under") || lower.includes("lower") || lower.includes("mismatch"))) {
+          return false;
+        }
+        return true;
+      });
+    }
+
+    if (cleanedSummary) {
+      const sentences = cleanedSummary.split(/(?<=[.!?])\s+/);
+      const validSentences = sentences.filter((s) => {
+        const lower = s.toLowerCase();
+        if (
+          (lower.includes("compensation") || lower.includes("salary") || lower.includes("hourly") || lower.includes("/hr") || lower.includes("rate") || lower.includes("lower end") || lower.includes("pay")) &&
+          (lower.includes("below") || lower.includes("under") || lower.includes("mismatch") || lower.includes("not ideal") || lower.includes("target"))
+        ) {
+          return false;
+        }
+        return true;
+      });
+      cleanedSummary = validSentences.join(" ").trim();
+      if (!cleanedSummary && job.title && job.company) {
+        cleanedSummary = `${job.title} at ${job.company} (${job.location}) aligns well with candidate profile and technical requirements.`;
+      }
+    }
+  }
+
+  let hasSalaryTextFlag = false;
+  if (!isHourlySalary && !isUndisclosedSalary && maxDisclosed === 0) {
+    const evalTextLower = [
+      ...(Array.isArray(cleanedReasons) ? cleanedReasons : []),
+      ...(Array.isArray(cleanedMissing) ? cleanedMissing : []),
+      cleanedSummary,
+    ].filter(Boolean).join(" ").toLowerCase();
+
+    hasSalaryTextFlag =
+      evalTextLower.includes("below target salary") ||
+      evalTextLower.includes("below target minimum") ||
+      evalTextLower.includes("below minimum target") ||
+      evalTextLower.includes("below candidate's target") ||
+      evalTextLower.includes("below the candidate's target") ||
+      evalTextLower.includes("below the candidate's minimum requirement") ||
+      evalTextLower.includes("compensation mismatch") ||
+      (evalTextLower.includes("salary") && (evalTextLower.includes("below") || evalTextLower.includes("under"))) ||
+      (evalTextLower.includes("compensation") && (evalTextLower.includes("below") || evalTextLower.includes("under")));
+  }
+
+  const cleanDesc = (job.description || "").trim();
+  const isShortDesc = cleanDesc.length < 250 || (cleanDesc.includes("is hiring for a") && cleanDesc.includes("Direct posting listed on") && cleanDesc.length < 380);
+  const hasQualifications = /qualification|requirement|responsibility|prerequisite|what you'll bring|what we're looking for|must have|skills|experience/i.test(cleanDesc);
+  const isLackingDetails = isShortDesc || (!hasQualifications && cleanDesc.length < 450);
+
+  const isClosedText =
+    /no longer accepting applications/i.test(cleanDesc) ||
+    /no longer taking applications/i.test(cleanDesc) ||
+    /position is closed/i.test(cleanDesc) ||
+    /position closed/i.test(cleanDesc) ||
+    /job is closed/i.test(cleanDesc) ||
+    /job is no longer available/i.test(cleanDesc) ||
+    /this job has expired/i.test(cleanDesc) ||
+    /posting expired/i.test(cleanDesc) ||
+    /application closed/i.test(cleanDesc) ||
+    /no longer active/i.test(cleanDesc);
+
+  if (isClosedText || hasHardBlocker) {
+    newScore = Math.min(newScore !== undefined ? newScore : 15, 15);
+    newMatchLevel = "Unmatched";
+    if (isClosedText) {
+      const closedNote = "Job is no longer accepting applications (Position Closed/Expired).";
+      if (!cleanedMissing.some((m) => m.toLowerCase().includes("no longer accepting"))) {
+        cleanedMissing = [closedNote, ...cleanedMissing];
+      }
+    }
+  } else if (isLackingDetails) {
+    newScore = Math.min(newScore !== undefined ? newScore : 45, 45);
+    newMatchLevel = "Weak Match";
+    const shortDescNote = "Job description is too brief and lacks minimum qualifications or required role details.";
+    if (!cleanedMissing.some((m) => m.toLowerCase().includes("too brief") || m.toLowerCase().includes("lacks minimum qualifications"))) {
+      cleanedMissing = [shortDescNote, ...cleanedMissing];
+    }
+    if (!cleanedReasons.some((r) => r.toLowerCase().includes("brief description"))) {
+      cleanedReasons = [shortDescNote, ...cleanedReasons];
+    }
+  } else if (isSalaryBelow || hasSalaryTextFlag) {
+    newScore = 45;
+    newMatchLevel = "Weak Match";
+    if (salaryBelowNote && !cleanedReasons.some((r) => r.toLowerCase().includes("below target salary"))) {
+      cleanedReasons = [salaryBelowNote, ...cleanedReasons];
+    }
+    if (!cleanedMissing.some((m) => m.toLowerCase().includes("salary"))) {
+      if (salaryBelowNote) {
+        cleanedMissing = [salaryBelowNote, ...cleanedMissing];
+      } else if (targetMinSalary > 0) {
+        cleanedMissing = [`Disclosed annual salary is below target minimum ($${targetMinSalary.toLocaleString()})`, ...cleanedMissing];
+      }
+    }
+  } else if (hasYoeGap || hasOverQual) {
+    newScore = 45;
+    newMatchLevel = "Weak Match";
+  } else {
+    if (newScore === undefined || newScore < 80) {
       newScore = 85;
       newMatchLevel = "Strong Match";
+    }
+  }
+
+  // Company size filter evaluation
+  if (config.company_size_filter && config.company_size_filter !== 'any') {
+    const sizePref = config.company_size_filter;
+    const empMatch = cleanDesc.match(/\b(\d{1,3}(?:,\d{3})+|\d+)\+?\s*employees?\b/i) || cleanDesc.match(/company size:?\s*(\d+)/i);
+    if (empMatch) {
+      const count = parseInt(empMatch[1].replace(/,/g, ''), 10);
+      if (sizePref === 'startup' && count > 300) {
+        if (!cleanedMissing.some((m) => m.includes("Company size"))) {
+          cleanedMissing.push(`Company size (${count.toLocaleString()} employees) exceeds candidate's startup preference (<200)`);
+        }
+      } else if (sizePref === 'enterprise' && count < 500) {
+        if (!cleanedMissing.some((m) => m.includes("Company size"))) {
+          cleanedMissing.push(`Company size (${count.toLocaleString()} employees) is below candidate's enterprise preference (1,000+)`);
+        }
+      }
     }
   }
 
@@ -83,12 +255,40 @@ export function sanitizeJobEvaluation(job: Job, preferredLocations: string[]): J
 }
 
 export function detectHardBlockerViolation(job: Job, hardBlockersText?: string): { isBlocked: boolean; reason: string } {
+  const rawJobText = `${job.title} ${job.company} ${job.description || ''} ${job.department || ''}`.toLowerCase();
+  const normJobText = rawJobText.replace(/u\.s\./g, "us").replace(/u\.s/g, "us");
+
+  const isClosedJob =
+    /no longer accepting applications/i.test(normJobText) ||
+    /no longer taking applications/i.test(normJobText) ||
+    /position is closed/i.test(normJobText) ||
+    /position closed/i.test(normJobText) ||
+    /job is closed/i.test(normJobText) ||
+    /job is no longer available/i.test(normJobText) ||
+    /this job has expired/i.test(normJobText) ||
+    /posting expired/i.test(normJobText) ||
+    /application closed/i.test(normJobText) ||
+    /no longer active/i.test(normJobText) ||
+    /this listing is closed/i.test(normJobText) ||
+    /this position is no longer accepting applications/i.test(normJobText);
+
+  if (isClosedJob) {
+    return { isBlocked: true, reason: "Hard Blocker: Job is no longer accepting applications (Position Closed)" };
+  }
+
   if (!hardBlockersText || !hardBlockersText.trim()) {
     return { isBlocked: false, reason: "" };
   }
 
-  const rawJobText = `${job.title} ${job.company} ${job.description || ''} ${job.department || ''}`.toLowerCase();
-  const normJobText = rawJobText.replace(/u\.s\./g, "us").replace(/u\.s/g, "us");
+  // Remove standard EEO and background check boilerplate sentences that cause false positives
+  const textWithoutEEO = normJobText
+    .replace(/equal opportunity employer[\s\S]*?(?=\n\n|\.|$)/gi, "")
+    .replace(/without regard to race[\s\S]*?(?=\n\n|\.|$)/gi, "")
+    .replace(/affirmative action employer[\s\S]*?(?=\n\n|\.|$)/gi, "")
+    .replace(/regardless of race, color[\s\S]*?(?=\n\n|\.|$)/gi, "")
+    .replace(/eeo policy[\s\S]*?(?=\n\n|\.|$)/gi, "");
+
+  const titleLower = (job.title || "").toLowerCase();
 
   const lines = hardBlockersText
     .split("\n")
@@ -99,36 +299,37 @@ export function detectHardBlockerViolation(job: Job, hardBlockersText?: string):
     const rawLine = line.toLowerCase();
     const normLine = rawLine.replace(/u\.s\./g, "us").replace(/u\.s/g, "us");
 
+    // Rule 1: U.S. Citizenship / Security Clearance
     if (
       normLine.includes("citizen") ||
       normLine.includes("citizenship") ||
       normLine.includes("clearance") ||
       normLine.includes("security clearance") ||
-      normLine.includes("government contract") ||
-      normLine.includes("us citizen")
+      normLine.includes("ts/sci") ||
+      normLine.includes("polygraph")
     ) {
-      const isCitizenshipRequirement =
-        rawJobText.includes("u.s. citizen") ||
-        rawJobText.includes("u.s. citizens") ||
-        normJobText.includes("us citizen") ||
-        normJobText.includes("us citizens") ||
-        normJobText.includes("citizenship") ||
-        normJobText.includes("security clearance") ||
-        normJobText.includes("secret clearance") ||
-        normJobText.includes("top secret") ||
-        normJobText.includes("ts/sci") ||
-        normJobText.includes("government clearance") ||
-        normJobText.includes("government contract") ||
-        normJobText.includes("security requirements") ||
-        normJobText.includes("limited to us") ||
-        normJobText.includes("limited to u.s") ||
-        normJobText.includes("must be a us") ||
-        normJobText.includes("must be a u.s") ||
-        normJobText.includes("active clearance") ||
-        normJobText.includes("obtain and maintain") ||
-        normJobText.includes("eligibility to obtain");
+      const isExplicitCitizenshipOrClearance =
+        textWithoutEEO.includes("must be a u.s. citizen") ||
+        textWithoutEEO.includes("must be a us citizen") ||
+        textWithoutEEO.includes("u.s. citizenship required") ||
+        textWithoutEEO.includes("us citizenship required") ||
+        textWithoutEEO.includes("u.s. citizens only") ||
+        textWithoutEEO.includes("us citizens only") ||
+        textWithoutEEO.includes("restricted to u.s. citizens") ||
+        textWithoutEEO.includes("restricted to us citizens") ||
+        textWithoutEEO.includes("active security clearance") ||
+        textWithoutEEO.includes("active secret clearance") ||
+        textWithoutEEO.includes("active top secret") ||
+        textWithoutEEO.includes("active ts/sci") ||
+        textWithoutEEO.includes("ts/sci with polygraph") ||
+        textWithoutEEO.includes("top secret/sci") ||
+        textWithoutEEO.includes("polygraph required") ||
+        textWithoutEEO.includes("security clearance is required") ||
+        textWithoutEEO.includes("must possess an active security clearance") ||
+        textWithoutEEO.includes("must hold an active security clearance") ||
+        textWithoutEEO.includes("ability to obtain and maintain a security clearance");
 
-      if (isCitizenshipRequirement) {
+      if (isExplicitCitizenshipOrClearance) {
         return {
           isBlocked: true,
           reason: `Hard Blocker Triggered: Role requires U.S. Citizenship or Security Clearance ("${line}")`
@@ -136,41 +337,101 @@ export function detectHardBlockerViolation(job: Job, hardBlockersText?: string):
       }
     }
 
+    // Rule 2: Data Engineer / Data Architect roles
     if (
       normLine.includes("data engineer") ||
-      normLine.includes("data engineering") ||
-      normLine.includes("data architect") ||
-      normLine.includes("test engineer") ||
-      normLine.includes("qa engineer")
+      normLine.includes("data architect")
     ) {
       if (
-        normJobText.includes("data engineer") ||
-        normJobText.includes("data engineering") ||
-        normJobText.includes("data architect") ||
-        normJobText.includes("test engineer") ||
-        normJobText.includes("qa engineer") ||
-        normJobText.includes("software engineer in test") ||
-        normJobText.includes("sdet")
+        titleLower.includes("data engineer") ||
+        titleLower.includes("data architect") ||
+        titleLower.includes("data engineering")
       ) {
         return {
           isBlocked: true,
-          reason: `Hard Blocker Triggered: Restricted specialized role ("${line}")`
+          reason: `Hard Blocker Triggered: Restricted Data Engineer / Data Architect role ("${line}")`
         };
       }
     }
 
+    // Rule 3: Test Engineer / QA / SDET roles
+    if (
+      normLine.includes("test engineer") ||
+      normLine.includes("qa engineer") ||
+      normLine.includes("qa") ||
+      normLine.includes("sdet")
+    ) {
+      if (
+        titleLower.includes("test engineer") ||
+        titleLower.includes("qa engineer") ||
+        titleLower.includes("quality assurance") ||
+        titleLower.includes("sdet") ||
+        titleLower.includes("software engineer in test") ||
+        titleLower.includes("system test") ||
+        titleLower.includes("validation engineer")
+      ) {
+        return {
+          isBlocked: true,
+          reason: `Hard Blocker Triggered: Restricted Test Engineer / QA role ("${line}")`
+        };
+      }
+    }
+
+    // Rule 4: iOS / Android / Mobile Development roles
+    if (
+      normLine.includes("ios") ||
+      normLine.includes("android") ||
+      normLine.includes("mobile")
+    ) {
+      if (
+        titleLower.includes("ios") ||
+        titleLower.includes("android") ||
+        titleLower.includes("mobile engineer") ||
+        titleLower.includes("mobile developer") ||
+        titleLower.includes("mobile app")
+      ) {
+        return {
+          isBlocked: true,
+          reason: `Hard Blocker Triggered: iOS / Android Development role ("${line}")`
+        };
+      }
+    }
+
+    // Rule 5: People Manager roles
+    if (
+      normLine.includes("people manager") ||
+      normLine.includes("engineering manager") ||
+      normLine.includes("manager roles")
+    ) {
+      if (
+        titleLower.includes("engineering manager") ||
+        titleLower.includes("software engineering manager") ||
+        titleLower.includes("dev manager") ||
+        titleLower.includes("tech lead manager") ||
+        titleLower.includes("people manager") ||
+        titleLower.includes("director of engineering") ||
+        titleLower.includes("vp of engineering")
+      ) {
+        return {
+          isBlocked: true,
+          reason: `Hard Blocker Triggered: People Manager role ("${line}")`
+        };
+      }
+    }
+
+    // Rule 6: Pure Frontend roles
     if (
       normLine.includes("pure frontend") ||
       normLine.includes("frontend only") ||
-      normLine.includes("frontend role") ||
+      normLine.includes("frontend without backend") ||
       normLine.includes("front end")
     ) {
-      const titleLower = job.title.toLowerCase();
       if (
-        titleLower.includes("frontend") ||
-        titleLower.includes("front end") ||
-        titleLower.includes("front-end") ||
-        normJobText.includes("pure frontend")
+        (titleLower.includes("frontend") || titleLower.includes("front end") || titleLower.includes("front-end")) &&
+        !titleLower.includes("fullstack") &&
+        !titleLower.includes("full stack") &&
+        !titleLower.includes("backend") &&
+        !titleLower.includes("full-stack")
       ) {
         return {
           isBlocked: true,
@@ -179,6 +440,7 @@ export function detectHardBlockerViolation(job: Job, hardBlockersText?: string):
       }
     }
 
+    // Rule 7: 5 Days On-Site requirement
     if (
       normLine.includes("on-site") ||
       normLine.includes("onsite") ||
@@ -186,10 +448,11 @@ export function detectHardBlockerViolation(job: Job, hardBlockersText?: string):
       normLine.includes("5 days")
     ) {
       if (
-        normJobText.includes("5 days in office") ||
-        normJobText.includes("5 days on-site") ||
-        normJobText.includes("100% on-site") ||
-        normJobText.includes("onsite 5 days")
+        textWithoutEEO.includes("5 days in office") ||
+        textWithoutEEO.includes("5 days on-site") ||
+        textWithoutEEO.includes("100% on-site") ||
+        textWithoutEEO.includes("onsite 5 days") ||
+        textWithoutEEO.includes("5 days a week on-site")
       ) {
         return {
           isBlocked: true,
@@ -198,6 +461,7 @@ export function detectHardBlockerViolation(job: Job, hardBlockersText?: string):
       }
     }
 
+    // Rule 8: Contractor or 1099 roles
     if (
       normLine.includes("contractor") ||
       normLine.includes("1099") ||
@@ -205,15 +469,14 @@ export function detectHardBlockerViolation(job: Job, hardBlockersText?: string):
       normLine.includes("temp")
     ) {
       if (
-        normJobText.includes("contractor") ||
-        normJobText.includes("1099") ||
-        normJobText.includes("contract role") ||
-        normJobText.includes("w2 contract") ||
-        normJobText.includes("contract position") ||
-        normJobText.includes("contract-to-hire") ||
-        normJobText.includes("contract to hire") ||
-        normJobText.includes("temp position") ||
-        normJobText.includes("temporary position")
+        textWithoutEEO.includes("contractor") ||
+        textWithoutEEO.includes("1099") ||
+        textWithoutEEO.includes("contract role") ||
+        textWithoutEEO.includes("w2 contract") ||
+        textWithoutEEO.includes("contract position") ||
+        textWithoutEEO.includes("contract-to-hire") ||
+        textWithoutEEO.includes("temp position") ||
+        textWithoutEEO.includes("temporary position")
       ) {
         return {
           isBlocked: true,
@@ -222,6 +485,7 @@ export function detectHardBlockerViolation(job: Job, hardBlockersText?: string):
       }
     }
 
+    // Rule 9: Recruiting / Staffing Agency
     if (
       normLine.includes("recruiter") ||
       normLine.includes("recruiting") ||
@@ -230,34 +494,21 @@ export function detectHardBlockerViolation(job: Job, hardBlockersText?: string):
       normLine.includes("direct hire")
     ) {
       if (
-        normJobText.includes("staffing agency") ||
-        normJobText.includes("recruiting agency") ||
-        normJobText.includes("recruitment agency") ||
-        normJobText.includes("placement agency") ||
-        normJobText.includes("employment agency") ||
-        normJobText.includes("talent agency") ||
-        normJobText.includes("on behalf of our client") ||
-        normJobText.includes("posting for our client") ||
-        normJobText.includes("our client is hiring") ||
-        normJobText.includes("client company")
+        textWithoutEEO.includes("staffing agency") ||
+        textWithoutEEO.includes("recruiting agency") ||
+        textWithoutEEO.includes("recruitment agency") ||
+        textWithoutEEO.includes("placement agency") ||
+        textWithoutEEO.includes("employment agency") ||
+        textWithoutEEO.includes("talent agency") ||
+        textWithoutEEO.includes("on behalf of our client") ||
+        textWithoutEEO.includes("posting for our client") ||
+        textWithoutEEO.includes("our client is hiring")
       ) {
         return {
           isBlocked: true,
           reason: `Hard Blocker Triggered: Recruiting or staffing agency post (only company direct hire allowed) ("${line}")`
         };
       }
-    }
-
-    const cleanKeyword = normLine
-      .replace(/i (don't|do not) (want|like) (any|a|to be)?/gi, "")
-      .replace(/requires?|requires? a|requires? us|avoid|no|without|never/gi, "")
-      .trim();
-
-    if (cleanKeyword.length >= 4 && normJobText.includes(cleanKeyword)) {
-      return {
-        isBlocked: true,
-        reason: `Hard Blocker Triggered: Role matches criteria ("${line}")`
-      };
     }
   }
 
@@ -320,8 +571,8 @@ export function generateHeuristicEvaluation(job: Job, resume: ResumeData, config
       yoePenalty = 45;
       yoeNote = `Experience Gap (Weak Match): Candidate (~${candidateYoe} yrs) is significantly below required ${yoeBounds.minYoe}+ yrs criteria`;
     } else {
-      yoePenalty = 25;
-      yoeNote = `Experience Gap (Weak Match): Candidate (~${candidateYoe} yrs) is below required ${yoeBounds.minYoe}+ yrs criteria`;
+      yoePenalty = 35;
+      yoeNote = `Experience Gap (Weak Match): Candidate (~${candidateYoe} yrs) is below required ${yoeBounds.minYoe}+ yrs criteria (deficit of ${gap} year(s))`;
     }
   } else if (candidateYoe > 0 && yoeBounds.maxYoe !== undefined && candidateYoe > yoeBounds.maxYoe) {
     isExceedingMaxYoe = true;
@@ -333,12 +584,19 @@ export function generateHeuristicEvaluation(job: Job, resume: ResumeData, config
   let salaryNote = "";
   let isBelowTargetSalary = false;
   const targetMinSalary = config?.min_salary || 0;
-  if (targetMinSalary > 0 && job.salary && job.salary !== "$Not found") {
-    const maxDisclosed = extractMaxSalaryNumber(job.salary);
-    if (maxDisclosed > 0 && maxDisclosed < targetMinSalary) {
-      isBelowTargetSalary = true;
-      salaryPenalty = 25;
-      salaryNote = `Below Target Salary (Weak Match): Disclosed salary max ($${maxDisclosed.toLocaleString()}) is below target minimum ($${targetMinSalary.toLocaleString()})`;
+  const salaryTextOnly = (job.salary && job.salary !== "$Not found")
+    ? job.salary
+    : (extractSalaryWithRegex(job.description || "") || "");
+
+  if (targetMinSalary > 0 && salaryTextOnly && salaryTextOnly !== "$Not found") {
+    const isHourly = /\b(?:hr|hour|hourly|\/hr)\b/i.test(salaryTextOnly);
+    if (!isHourly) {
+      const maxDisclosed = extractMaxSalaryNumber(salaryTextOnly);
+      if (maxDisclosed >= 1000 && maxDisclosed < targetMinSalary) {
+        isBelowTargetSalary = true;
+        salaryPenalty = 35;
+        salaryNote = `Below Target Salary (Weak Match): Disclosed annual high range ($${maxDisclosed.toLocaleString()}) is below minimum target ($${targetMinSalary.toLocaleString()})`;
+      }
     }
   }
 
@@ -369,7 +627,7 @@ export function generateHeuristicEvaluation(job: Job, resume: ResumeData, config
   }
   const variance = (Math.abs(hash) % 11) - 5;
   let scoreCap = (candidateYoe >= 3 && isEntryLevelRole) ? 55 : 96;
-  if (isUnderYoe || isExceedingMaxYoe || isBelowTargetSalary) scoreCap = Math.min(scoreCap, 55);
+  if (isUnderYoe || isExceedingMaxYoe || isBelowTargetSalary) scoreCap = Math.min(scoreCap, 45);
   if (hardBlockerPenalty > 0) scoreCap = Math.min(scoreCap, 25);
 
   const finalScore = Math.min(scoreCap, Math.max(10, baseScore + variance - locationPenalty - yoePenalty - salaryPenalty - overQualPenalty - hardBlockerPenalty));
@@ -386,11 +644,16 @@ export function generateHeuristicEvaluation(job: Job, resume: ResumeData, config
 
   const reasons = [
     `Role title and seniority (${job.title}) align with candidate engineering background.`,
-    `Matched core skills: ${matchedSkills.length > 0 ? matchedSkills.join(", ") : "TypeScript, React, Node.js"}.`
+    matchedSkills.length > 0
+      ? `Matched core skills: ${matchedSkills.join(", ")}.`
+      : `General software engineering principles align with role requirements.`
   ];
 
   if (hardBlockerNote) {
     reasons.unshift(hardBlockerNote);
+  }
+  if (salaryNote) {
+    reasons.push(salaryNote);
   }
   if (locationNote) {
     reasons.push(locationNote);
@@ -405,6 +668,9 @@ export function generateHeuristicEvaluation(job: Job, resume: ResumeData, config
   const missingList = [...missingSkills];
   if (hardBlockerNote) {
     missingList.unshift(hardBlockerNote);
+  }
+  if (salaryNote) {
+    missingList.unshift(salaryNote);
   }
   if (locationNote) {
     missingList.unshift(`Location: ${job.location}`);
@@ -633,6 +899,40 @@ ${promptJobsText}
 
 Instructions:
 - Evaluate each job ID separately against the candidate resume.
+- CRITICAL HARD BLOCKER RULE:
+  - DO NOT flag standard EEO statement mentions of "citizenship" or standard background checks as requiring U.S. Citizenship or Security Clearance. ONLY flag if the job explicitly requires U.S. Citizenship or Security Clearance.
+  - DO NOT flag software engineering or AI engineering roles as "Data Engineer" or "Test Engineer" unless the job title explicitly specifies Data Engineer, Test Engineer, or QA.
+- STRICT CORE SKILL & PROGRAMMING LANGUAGE VERIFICATION RULE (MANDATORY):
+  - Extract skills and programming languages explicitly listed in the candidate's resume text.
+  - Verify every primary programming language or core technology required by the job (e.g., C++, Rust, Go, Java, Python, C#, Swift, etc.) against the candidate's resume.
+  - NEVER hallucinate or assume candidate experience in a language or skill (such as C++) if it is NOT explicitly present in their resume text. DO NOT write reasons like "Meets core requirement for C++" or "C++ experience" unless C++ is explicitly listed in their resume.
+  - MISSING CORE SKILL PENALTY: If a job mandates a primary programming language or core technology (e.g., C++ for a C++/systems engineering position) that is ABSENT from the candidate's resume:
+    1. You MUST list the missing language/technology explicitly in missing_skills (e.g., "C++ (not found on candidate resume)").
+    2. The match_level MUST NOT be "Strong Match" or "Good Match". It MUST be classified as "Weak Match" (or "Unmatched") with score <= 45/100.
+    3. You MUST state the missing core skill gap clearly in the summary.
+- STRICT YEARS OF EXPERIENCE (YOE) EVALUATION RULE (MANDATORY):
+  - Extract the candidate's total Years of Experience (YOE) from their resume.
+  - Extract the minimum required Years of Experience (YOE) from the job description (e.g., "5+ years", "6+ years", "8+ years", Senior/Staff requirements).
+  - STRICT DEFICIT PENALTY: If the candidate's total YOE is less than the job description's required minimum YOE by EVEN ONE YEAR (for example, candidate has 5 YOE but the job requires 6+ YOE, or candidate has 4 YOE but job requires 5+ YOE):
+    1. The match_level MUST be classified as "Weak Match" (or "Unmatched" if the YOE gap is 3+ years). It MUST NOT be classified as "Strong Match" or "Good Match".
+    2. The match score MUST NOT exceed 45/100.
+    3. You MUST explicitly state the YOE deficit in the summary (e.g. "Candidate has 5 YOE, which is below the required 6+ YOE for this role") and include it as the first item in missing_skills.
+- STRICT SALARY EVALUATION RULE (MANDATORY):
+  - Compare the job's disclosed ANNUAL salary range against the candidate's Target Minimum Salary ($${(configObj.min_salary || 0).toLocaleString()}).
+  - DO NOT compare, flag, or penalize if the salary is HOURLY (e.g. "$75 - $85 / hr", "$60/hr", "hourly", "contract rate") or if salary is "$Not found" or not disclosed. Hourly rate positions and non-disclosed salaries MUST NEVER be treated as below target minimum salary or as a mismatch. DO NOT write in summary, reasons, or missing_skills that an hourly rate or undisclosed salary is below the target minimum or a mismatch.
+  - ACCEPTABLE SALARY RANGE: If the MAXIMUM / UPPER END of the disclosed annual salary range (e.g. $235,375) reaches or exceeds the Target Minimum Salary ($${(configObj.min_salary || 0).toLocaleString()}), the salary MUST be treated as fully ACCEPTABLE and MUST NOT be penalized or listed as a gap or mismatch, even if the lower end of the range (e.g. $146,400) is below target minimum salary. DO NOT write in summary, reasons, or missing_skills that the salary lower end is below target minimum.
+  - STRICT ANNUAL SALARY BELOW TARGET PENALTY: ONLY if a job discloses an ANNUAL salary range (e.g., $120,000 - $180,000/yr) and its maximum / upper end (annual high range) is BELOW the Target Minimum Salary (e.g. $180,000 < $200,000):
+    1. The match_level MUST be classified as "Weak Match" (or "Unmatched"). It MUST NOT be classified as "Strong Match" or "Good Match".
+    2. The match score MUST NOT exceed 45/100.
+    3. You MUST state the annual salary deficit in the summary (e.g. "Disclosed annual high range ($180,000) is below minimum target ($200,000)") and include it in missing_skills.
+- EXPIRED / CLOSED JOB RULE (MANDATORY):
+  - If a job posting contains text indicating "no longer accepting applications", "no longer taking applications", "position is closed", "job is closed", "this job has expired", or "no longer active":
+    1. You MUST classify the match_level as "Unmatched" with match score 10-25.
+    2. You MUST state in summary and missing_skills: "Job is no longer accepting applications (position closed/expired)".
+- BRIEF DESCRIPTION / MISSING QUALIFICATIONS RULE (MANDATORY):
+  - If a job description is extremely short (e.g. fewer than 250 characters or just a default generic single sentence) or lacks minimum qualifications/requirements and basic details on what the role is about:
+    1. You MUST classify the match_level as "Weak Match" with match score <= 45/100.
+    2. You MUST state in missing_skills and summary: "Job description is too brief and lacks required qualifications or role details".
 - Calculate a match score (0 to 100) and match level (Strong Match | Good Match | Weak Match | Unmatched).
 - Provide 2-3 sentence executive summary, specific reasons, missing skills/gaps, and recommended actions.`;
 
@@ -717,15 +1017,27 @@ Instructions:
               }
 
               const targetMinSal = configObj.min_salary || 0;
-              if (targetMinSal > 0 && job.salary && job.salary !== "$Not found") {
-                const maxDisclosed = extractMaxSalaryNumber(job.salary);
-                if (maxDisclosed > 0 && maxDisclosed < targetMinSal) {
-                  evalObj.score = Math.min(evalObj.score || 50, 55);
-                  evalObj.match_level = 'Weak Match';
-                  if (!Array.isArray(evalObj.reasons)) evalObj.reasons = [];
-                  const salMsg = `Below Target Salary: Disclosed max salary ($${maxDisclosed.toLocaleString()}) is below minimum target ($${targetMinSal.toLocaleString()}) -> Weak Match`;
-                  if (!evalObj.reasons.some((r: string) => r.toLowerCase().includes("below target salary"))) {
-                    evalObj.reasons.unshift(salMsg);
+              if (targetMinSal > 0) {
+                const salStr = (job.salary && job.salary !== "$Not found")
+                  ? job.salary
+                  : (extractSalaryWithRegex(job.description || "") || "");
+                if (salStr && salStr !== "$Not found") {
+                  const isHourly = /\b(?:hr|hour|hourly|\/hr)\b/i.test(salStr);
+                  if (!isHourly) {
+                    const maxDisclosed = extractMaxSalaryNumber(salStr);
+                    if (maxDisclosed >= 1000 && maxDisclosed < targetMinSal) {
+                      evalObj.score = Math.min(evalObj.score || 45, 45);
+                      evalObj.match_level = 'Weak Match';
+                      if (!Array.isArray(evalObj.reasons)) evalObj.reasons = [];
+                      const salMsg = `Below Target Salary (Weak Match): Disclosed annual high range ($${maxDisclosed.toLocaleString()}) is below minimum target ($${targetMinSal.toLocaleString()})`;
+                      if (!evalObj.reasons.some((r: string) => r.toLowerCase().includes("below target salary") || r.toLowerCase().includes("salary"))) {
+                        evalObj.reasons.unshift(salMsg);
+                      }
+                      if (!Array.isArray(evalObj.missing_skills)) evalObj.missing_skills = [];
+                      if (!evalObj.missing_skills.some((m: string) => m.toLowerCase().includes("salary"))) {
+                        evalObj.missing_skills.unshift(`Annual salary high range ($${maxDisclosed.toLocaleString()}) below target minimum ($${targetMinSal.toLocaleString()})`);
+                      }
+                    }
                   }
                 }
               }
@@ -733,7 +1045,8 @@ Instructions:
 
             const sanitized = sanitizeJobEvaluation(
               { ...job, ...evalObj },
-              configObj.locations
+              configObj.locations,
+              configObj
             );
 
             results.push({

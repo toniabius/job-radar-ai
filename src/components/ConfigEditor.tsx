@@ -127,6 +127,9 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
     yaml += `auto_evaluate: ${cfg.auto_evaluate}\n`;
     yaml += `gemini_model: "${cfg.gemini_model || "gemini-3.1-flash-lite"}"\n`;
     yaml += `max_jobs_per_company: ${cfg.max_jobs_per_company || 5}\n`;
+    if (cfg.company_size_filter) {
+      yaml += `company_size_filter: "${cfg.company_size_filter}"\n`;
+    }
     if (cfg.hard_blockers) {
       yaml += `hard_blockers: |\n  ${cfg.hard_blockers.split("\n").join("\n  ")}\n`;
     }
@@ -599,7 +602,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
 
           {/* Section 2: Pipeline Execution Parameters */}
           <div className="pt-6 border-t border-slate-200 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {/* Target Salary Block */}
               <div>
                 <div className="flex items-center space-x-2 mb-3">
@@ -755,6 +758,40 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                       </>
                     );
                   })()}
+                </div>
+              </div>
+
+              {/* Company Size Filter Block */}
+              <div>
+                <div className="flex items-center space-x-2 mb-3">
+                  <Users className="w-4 h-4 text-emerald-600" />
+                  <h3 className="font-bold text-slate-900 text-sm">Company Size Preference</h3>
+                </div>
+
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                  <div>
+                    <label className="font-bold text-slate-800 block text-[11px] mb-1">
+                      Target Headcount Range:
+                    </label>
+                    <select
+                      value={config.company_size_filter || 'any'}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          company_size_filter: e.target.value as any,
+                        })
+                      }
+                      className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 font-medium focus:outline-none focus:border-emerald-500 shadow-2xs"
+                    >
+                      <option value="any">Any Company Size (No Preference)</option>
+                      <option value="startup">Startup & Seed / Growth (&lt;200 employees)</option>
+                      <option value="midsize">Mid-size Companies (200 - 1,000 employees)</option>
+                      <option value="enterprise">Large Enterprise & Fortune 500 (1,000+ employees)</option>
+                    </select>
+                  </div>
+                  <p className="text-[10px] text-slate-500 pt-1">
+                    Evaluates company headcount extracted from job postings and flags size mismatches.
+                  </p>
                 </div>
               </div>
             </div>
