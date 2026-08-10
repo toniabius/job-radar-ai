@@ -56,6 +56,14 @@ export function sanitizeJobEvaluation(job: Job, preferredLocations: string[], co
   let newScore = job.score;
   let newMatchLevel: 'Strong Match' | 'Good Match' | 'Weak Match' | 'Unmatched' | undefined = job.match_level;
 
+  const activeResumeObj = loadResume();
+  const candidateYoe = activeResumeObj ? parseResumeDetails(activeResumeObj.content).experienceYears : 0;
+
+  const titleAndDescLower = `${job.title} ${job.description || ''}`.toLowerCase();
+  const isGraduateRole =
+    /\b(?:graduate|new grad|new graduate|university graduate|early career|intern|internship|0-1 years|0-2 years)\b/i.test(titleAndDescLower) ||
+    /\b(associate software engineer|graduate engineer)\b/i.test((job.title || '').toLowerCase());
+
   const hasHardBlocker =
     cleanedMissing.some((m) => m.toLowerCase().includes("hard blocker")) ||
     cleanedReasons.some((r) => r.toLowerCase().includes("hard blocker"));
@@ -65,8 +73,26 @@ export function sanitizeJobEvaluation(job: Job, preferredLocations: string[], co
     cleanedReasons.some((r) => r.toLowerCase().includes("experience gap"));
 
   const hasOverQual =
-    cleanedMissing.some((m) => m.toLowerCase().includes("over-qualification")) ||
-    cleanedReasons.some((r) => r.toLowerCase().includes("over-qualification"));
+    (candidateYoe >= 3 && isGraduateRole) ||
+    cleanedMissing.some((m) => m.toLowerCase().includes("over-qualification") || m.toLowerCase().includes("overqualified")) ||
+    cleanedReasons.some((r) => r.toLowerCase().includes("over-qualification") || r.toLowerCase().includes("overqualified"));
+
+  const combinedEvalText = [
+    ...(Array.isArray(cleanedMissing) ? cleanedMissing : []),
+    ...(Array.isArray(cleanedReasons) ? cleanedReasons : []),
+    cleanedSummary,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  const hasMissingCoreSkill =
+    combinedEvalText.includes("not found on candidate resume") ||
+    combinedEvalText.includes("lacks the required") ||
+    combinedEvalText.includes("lacks required") ||
+    combinedEvalText.includes("missing required") ||
+    combinedEvalText.includes("no c++ experience") ||
+    combinedEvalText.includes("c++ (not found") ||
+    combinedEvalText.includes("c++ proficiency") ||
+    combinedEvalText.includes("lack of c++") ||
+    combinedEvalText.includes("lacks c++");
 
   const targetMinSalary = config.min_salary || 0;
   let isSalaryBelow = false;
@@ -204,7 +230,7 @@ export function sanitizeJobEvaluation(job: Job, preferredLocations: string[], co
       cleanedReasons = [shortDescNote, ...cleanedReasons];
     }
   } else if (isSalaryBelow || hasSalaryTextFlag) {
-    newScore = 45;
+    newScore = Math.min(newScore !== undefined ? newScore : 45, 45);
     newMatchLevel = "Weak Match";
     if (salaryBelowNote && !cleanedReasons.some((r) => r.toLowerCase().includes("below target salary"))) {
       cleanedReasons = [salaryBelowNote, ...cleanedReasons];
@@ -216,32 +242,26 @@ export function sanitizeJobEvaluation(job: Job, preferredLocations: string[], co
         cleanedMissing = [`Disclosed annual salary is below target minimum ($${targetMinSalary.toLocaleString()})`, ...cleanedMissing];
       }
     }
-  } else if (hasYoeGap || hasOverQual) {
-    newScore = 45;
+  } else if (hasYoeGap || hasOverQual || hasMissingCoreSkill) {
+    newScore = Math.min(newScore !== undefined ? newScore : 45, 45);
     newMatchLevel = "Weak Match";
-  } else {
-    if (newScore === undefined || newScore < 80) {
-      newScore = 85;
-      newMatchLevel = "Strong Match";
-    }
-  }
-
-  // Company size filter evaluation
-  if (config.company_size_filter && config.company_size_filter !== 'any') {
-    const sizePref = config.company_size_filter;
-    const empMatch = cleanDesc.match(/\b(\d{1,3}(?:,\d{3})+|\d+)\+?\s*employees?\b/i) || cleanDesc.match(/company size:?\s*(\d+)/i);
-    if (empMatch) {
-      const count = parseInt(empMatch[1].replace(/,/g, ''), 10);
-      if (sizePref === 'startup' && count > 300) {
-        if (!cleanedMissing.some((m) => m.includes("Company size"))) {
-          cleanedMissing.push(`Company size (${count.toLocaleString()} employees) exceeds candidate's startup preference (<200)`);
-        }
-      } else if (sizePref === 'enterprise' && count < 500) {
-        if (!cleanedMissing.some((m) => m.includes("Company size"))) {
-          cleanedMissing.push(`Company size (${count.toLocaleString()} employees) is below candidate's enterprise preference (1,000+)`);
-        }
+    if (isGraduateRole && candidateYoe >= 3) {
+      const overQualMsg = `Over-Qualification: Candidate has ~${candidateYoe} years of professional experience, but position is targeted at New Graduates / Early Career applicants`;
+      if (!cleanedMissing.some((m) => m.toLowerCase().includes("over-qualification") || m.toLowerCase().includes("new graduates"))) {
+        cleanedMissing = [overQualMsg, ...cleanedMissing];
+      }
+      if (!cleanedReasons.some((r) => r.toLowerCase().includes("over-qualification") || r.toLowerCase().includes("new graduates"))) {
+        cleanedReasons = [overQualMsg, ...cleanedReasons];
       }
     }
+  } else {
+    if (newScore === undefined || newScore === null) {
+      newScore = 75;
+    }
+    if (newScore >= 80) newMatchLevel = "Strong Match";
+    else if (newScore >= 70) newMatchLevel = "Good Match";
+    else if (newScore >= 40) newMatchLevel = "Weak Match";
+    else newMatchLevel = "Unmatched";
   }
 
   return {
@@ -904,12 +924,19 @@ Instructions:
   - DO NOT flag software engineering or AI engineering roles as "Data Engineer" or "Test Engineer" unless the job title explicitly specifies Data Engineer, Test Engineer, or QA.
 - STRICT CORE SKILL & PROGRAMMING LANGUAGE VERIFICATION RULE (MANDATORY):
   - Extract skills and programming languages explicitly listed in the candidate's resume text.
-  - Verify every primary programming language or core technology required by the job (e.g., C++, Rust, Go, Java, Python, C#, Swift, etc.) against the candidate's resume.
+  - Verify every primary programming language or core technology required by the job (e.g., C++, Rust, Go, Java, Python, C#, Swift, GPU programming, CUDA, CUTLASS, etc.) against the candidate's resume.
   - NEVER hallucinate or assume candidate experience in a language or skill (such as C++) if it is NOT explicitly present in their resume text. DO NOT write reasons like "Meets core requirement for C++" or "C++ experience" unless C++ is explicitly listed in their resume.
-  - MISSING CORE SKILL PENALTY: If a job mandates a primary programming language or core technology (e.g., C++ for a C++/systems engineering position) that is ABSENT from the candidate's resume:
+  - MISSING CORE SKILL PENALTY: If a job mandates a primary programming language or core technology (e.g., C++ for a C++/systems/GPU engineering position) that is ABSENT from the candidate's resume:
     1. You MUST list the missing language/technology explicitly in missing_skills (e.g., "C++ (not found on candidate resume)").
     2. The match_level MUST NOT be "Strong Match" or "Good Match". It MUST be classified as "Weak Match" (or "Unmatched") with score <= 45/100.
     3. You MUST state the missing core skill gap clearly in the summary.
+- STRICT GRADUATE / NEW GRAD / INTERN OVER-QUALIFICATION RULE (MANDATORY):
+  - Check if the job title or description specifies a Graduate, New Grad, University Graduate, Early Career, or Internship role (e.g. "Software Engineer Graduate", "2027 Start", "New Grad", "University Graduate", "Intern").
+  - Extract candidate's total professional years of experience (YOE) from their resume.
+  - OVER-QUALIFICATION PENALTY: If candidate has 3 or more years of professional engineering experience (e.g., 3-5+ YOE) and applies to a Graduate, New Grad, University Graduate, or Internship position:
+    1. This position is a MISMATCH due to over-qualification / eligibility conflict (candidate is an experienced professional, not an entry-level new graduate).
+    2. You MUST classify match_level as "Weak Match" (or "Unmatched") with score <= 40/100.
+    3. You MUST list in missing_skills and reasons: "Over-qualification: Position is targeted at New Graduates / Early Career applicants, whereas candidate has ~X years of professional engineering experience."
 - STRICT YEARS OF EXPERIENCE (YOE) EVALUATION RULE (MANDATORY):
   - Extract the candidate's total Years of Experience (YOE) from their resume.
   - Extract the minimum required Years of Experience (YOE) from the job description (e.g., "5+ years", "6+ years", "8+ years", Senior/Staff requirements).
@@ -998,7 +1025,24 @@ Instructions:
             const yoeBounds = extractYoeBounds(`${job.title} ${job.description || ''}`);
 
             if (!hbCheck.isBlocked) {
-              if (candidateYoe > 0 && yoeBounds.minYoe > 0 && candidateYoe < yoeBounds.minYoe) {
+              const titleAndDescLower = `${job.title} ${job.description || ''}`.toLowerCase();
+              const isGraduateRole =
+                /\b(?:graduate|new grad|new graduate|university graduate|early career|intern|internship|0-1 years|0-2 years)\b/i.test(titleAndDescLower) ||
+                /\b(associate software engineer|graduate engineer)\b/i.test(job.title.toLowerCase());
+
+              if (candidateYoe >= 3 && isGraduateRole) {
+                evalObj.score = Math.min(evalObj.score || 40, 40);
+                evalObj.match_level = 'Weak Match';
+                if (!Array.isArray(evalObj.reasons)) evalObj.reasons = [];
+                const gradMsg = `Over-Qualification: Candidate has ~${candidateYoe} years of professional experience, but position is targeted at New Graduates / Early Career applicants`;
+                if (!evalObj.reasons.some((r: string) => r.toLowerCase().includes("over-qualification") || r.toLowerCase().includes("graduate"))) {
+                  evalObj.reasons.unshift(gradMsg);
+                }
+                if (!Array.isArray(evalObj.missing_skills)) evalObj.missing_skills = [];
+                if (!evalObj.missing_skills.some((m: string) => m.toLowerCase().includes("over-qualification") || m.toLowerCase().includes("graduate"))) {
+                  evalObj.missing_skills.unshift(gradMsg);
+                }
+              } else if (candidateYoe > 0 && yoeBounds.minYoe > 0 && candidateYoe < yoeBounds.minYoe) {
                 evalObj.score = Math.min(evalObj.score || 50, 55);
                 evalObj.match_level = 'Weak Match';
                 if (!Array.isArray(evalObj.reasons)) evalObj.reasons = [];
@@ -1014,6 +1058,27 @@ Instructions:
                 if (!evalObj.reasons.some((r: string) => r.toLowerCase().includes("yoe ceiling") || r.toLowerCase().includes("over-qualified"))) {
                   evalObj.reasons.unshift(yoeMsg);
                 }
+              }
+
+              const missingSkillsList = Array.isArray(evalObj.missing_skills) ? evalObj.missing_skills : [];
+              const reasonsList = Array.isArray(evalObj.reasons) ? evalObj.reasons : [];
+              const summaryText = evalObj.summary || "";
+              const combinedEvalText = [...missingSkillsList, ...reasonsList, summaryText].join(" ").toLowerCase();
+
+              const hasExplicitMissingLangOrSkill =
+                combinedEvalText.includes("not found on candidate resume") ||
+                combinedEvalText.includes("lacks the required") ||
+                combinedEvalText.includes("lacks required") ||
+                combinedEvalText.includes("missing required") ||
+                combinedEvalText.includes("no c++ experience") ||
+                combinedEvalText.includes("c++ (not found") ||
+                combinedEvalText.includes("c++ proficiency") ||
+                combinedEvalText.includes("lack of c++") ||
+                combinedEvalText.includes("lacks c++");
+
+              if (hasExplicitMissingLangOrSkill) {
+                evalObj.score = Math.min(evalObj.score || 45, 45);
+                evalObj.match_level = 'Weak Match';
               }
 
               const targetMinSal = configObj.min_salary || 0;

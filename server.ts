@@ -42,6 +42,7 @@ import {
   getPipelineLogsData,
   clearPipelineLogs,
   setPipelineCancelled,
+  setStopFetchingRequested,
   appendPipelineLog,
   setIsPipelineRunning,
   activePipelineCancelled,
@@ -635,6 +636,12 @@ app.delete("/api/pipeline/logs", (req, res) => {
 app.post("/api/pipeline/cancel", (req, res) => {
   setPipelineCancelled(true);
   res.json({ success: true, message: "Pipeline cancellation requested." });
+});
+
+app.post("/api/pipeline/stop-fetching", (req, res) => {
+  setStopFetchingRequested(true);
+  appendPipelineLog("SCANNER", "User requested to stop fetching and begin evaluation.");
+  res.json({ success: true, message: "Stop fetching requested." });
 });
 
 app.post("/api/pipeline/run", async (req, res) => {

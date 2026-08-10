@@ -28,13 +28,24 @@ export interface Job {
 export interface CompanyConfig {
   name: string;
   enabled: boolean;
-  provider: 'LinkedIn';
+  provider?: 'LinkedIn';
   searchQuery?: string;
+}
+
+export interface IgnoredCompanyGroup {
+  id: string;
+  name: string;
+  description?: string;
+  enabled?: boolean;
+  companies: string[];
 }
 
 export interface AppConfig {
   companies: CompanyConfig[];
   target_companies_enabled?: boolean;
+  ignored_companies_enabled?: boolean;
+  ignored_companies?: string[];
+  ignored_company_groups?: IgnoredCompanyGroup[];
   target_roles?: string[];
   locations: string[];
   skills: string[];
@@ -50,8 +61,6 @@ export interface AppConfig {
   auto_evaluate: boolean;
   gemini_model?: string;
   max_jobs_per_company: number;
-  company_size_filter?: 'any' | 'startup' | 'midsize' | 'enterprise';
-  company_size_min?: number;
   hard_blockers?: string;
 }
 

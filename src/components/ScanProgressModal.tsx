@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
-import { Loader2, CheckCircle2, Terminal, ChevronDown, ChevronUp, X, Sparkles, XCircle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Loader2, CheckCircle2, Terminal, ChevronDown, ChevronUp, X, Sparkles, XCircle, Volume2, VolumeX, Square } from 'lucide-react';
 import { PipelineLog } from '../types';
+import { playCompletionChime } from '../utils/audio';
 
 interface ScanProgressModalProps {
   isOpen: boolean;
   onClose: () => void;
   onCancel?: () => void;
+  onStopFetching?: () => void;
   isRunning: boolean;
   logs: PipelineLog[];
   geminiModel?: string;
@@ -22,12 +24,43 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
   isOpen,
   onClose,
   onCancel,
+  onStopFetching,
   isRunning,
   logs,
   mode = 'scan',
   scanResult,
 }) => {
   const [showLogs, setShowLogs] = useState<boolean>(true);
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
+  const [isStoppingFetching, setIsStoppingFetching] = useState<boolean>(false);
+  const prevIsRunningRef = useRef<boolean>(isRunning);
+
+  // Reset stopping state when pipeline stops running
+  useEffect(() => {
+    if (!isRunning) {
+      setIsStoppingFetching(false);
+    }
+  }, [isRunning]);
+
+  const isEvaluatingPhase = logs.some((l) => l.stage === 'GEMINI_AI');
+  const isFetchingPhase = isRunning && mode === 'scan' && !isEvaluatingPhase;
+
+  const handleStopFetchingClick = () => {
+    if (onStopFetching && isFetchingPhase) {
+      setIsStoppingFetching(true);
+      onStopFetching();
+    }
+  };
+
+  // Automatically play chime ring when scan transitions from running to finished
+  useEffect(() => {
+    if (prevIsRunningRef.current && !isRunning) {
+      if (soundEnabled) {
+        playCompletionChime();
+      }
+    }
+    prevIsRunningRef.current = isRunning;
+  }, [isRunning, soundEnabled]);
 
   // Helper to extract evaluation progress from logs
   const getEvalProgress = () => {
@@ -40,6 +73,25 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
       if (log.stage === 'GEMINI_AI') {
         isEvaluating = true;
         const msg = log.message;
+
+        // Match "Starting batch AI evaluation for 107 job(s)..." or "Starting AI Re-Evaluation for 107 job(s)..."
+        const initMatch = msg.match(/Starting.*evaluation for (\d+) job\(s\)/i);
+        if (initMatch && total === 0) {
+          total = parseInt(initMatch[1], 10);
+        }
+
+        // Match "Evaluating batch (1-5/23): "Title" @ Company..."
+        const batchMatch = msg.match(/Evaluating\s+batch\s+\((\d+)(?:-(\d+))?\/(\d+)\):\s+(.+)/i);
+        if (batchMatch) {
+          const startNum = parseInt(batchMatch[1], 10);
+          total = parseInt(batchMatch[3], 10);
+          if (current === 0) {
+            current = Math.max(0, startNum - 1);
+          }
+          if (batchMatch[4]) {
+            currentRole = batchMatch[4].split(',')[0].replace(/^"|"$/g, '').trim();
+          }
+        }
 
         // Match "Evaluating (12/23) "Title" @ Company..."
         const evalMatch = msg.match(/Evaluating\s+\((\d+)\/(\d+)\)\s+"([^"]+)"\s+@\s+([^\n.]+)/i);
@@ -55,12 +107,6 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
           current = parseInt(doneMatch[1], 10);
           total = parseInt(doneMatch[2], 10);
           currentRole = `${doneMatch[3]} @ ${doneMatch[4].trim()}`;
-        }
-
-        // Match "Starting sequential AI evaluation for 23 job(s)..."
-        const initMatch = msg.match(/Starting.*evaluation for (\d+) job\(s\)/i);
-        if (initMatch && total === 0) {
-          total = parseInt(initMatch[1], 10);
         }
 
         // Legacy match
@@ -138,10 +184,29 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
             </div>
           </div>
           <div className="flex items-center space-x-2">
+            <div className="relative group">
+              <button
+                type="button"
+                onClick={() => setSoundEnabled(!soundEnabled)}
+                className={`p-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center ${
+                  soundEnabled
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+                title={soundEnabled ? "Sound Enabled: Plays ring when scan is done (Click to mute)" : "Sound Muted: Click to enable sound when scan is done"}
+              >
+                {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+              </button>
+              {/* Tooltip on hover */}
+              <div className="absolute right-0 top-full mt-1.5 hidden group-hover:flex items-center whitespace-nowrap bg-slate-800 text-slate-200 text-[11px] font-medium px-2.5 py-1 rounded shadow-lg border border-slate-700 z-50 pointer-events-none">
+                {soundEnabled ? 'Sound enabled when scan is done' : 'Click to enable sound when scan is done'}
+              </div>
+            </div>
+
             {!isRunning && (
               <button
                 onClick={onClose}
-                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors ml-1"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -272,23 +337,52 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="bg-slate-50 border-t border-slate-200 px-6 py-3.5 flex justify-end items-center space-x-3">
-          {isRunning ? (
+        <div className="bg-slate-50 border-t border-slate-200 px-6 py-3.5 flex justify-between items-center gap-3">
+          {isRunning && mode === 'scan' ? (
             <button
-              onClick={onCancel}
-              className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold inline-flex items-center space-x-1.5 transition-all shadow-sm active:scale-95"
+              type="button"
+              disabled={!isFetchingPhase || isStoppingFetching}
+              onClick={handleStopFetchingClick}
+              className={`px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center space-x-1.5 transition-all shadow-sm ${
+                isFetchingPhase && !isStoppingFetching
+                  ? 'bg-amber-600 hover:bg-amber-700 text-white cursor-pointer active:scale-95'
+                  : 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300/60'
+              }`}
+              title={
+                isFetchingPhase
+                  ? 'Stop fetching more postings and start AI Gemini evaluation immediately on retrieved jobs'
+                  : 'Fetching phase complete. AI Gemini evaluation is in progress.'
+              }
             >
-              <XCircle className="w-4 h-4" />
-              <span>{mode === 'reeval' ? 'Cancel Re-Eval' : 'Cancel Scan'}</span>
+              {isStoppingFetching ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Square className="w-3.5 h-3.5 fill-current text-amber-100" />
+              )}
+              <span>{isStoppingFetching ? 'Stopping Fetch...' : 'Stop Fetching & Evaluate'}</span>
             </button>
           ) : (
-            <button
-              onClick={onClose}
-              className="px-5 py-2 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 shadow-md shadow-emerald-600/20 transition-all"
-            >
-              {mode === 'reeval' ? 'Done & Close' : 'Done & View Dashboard'}
-            </button>
+            <div />
           )}
+
+          <div className="flex items-center space-x-3">
+            {isRunning ? (
+              <button
+                onClick={onCancel}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold inline-flex items-center space-x-1.5 transition-all shadow-sm active:scale-95"
+              >
+                <XCircle className="w-4 h-4" />
+                <span>{mode === 'reeval' ? 'Cancel Re-Eval' : 'Cancel Scan'}</span>
+              </button>
+            ) : (
+              <button
+                onClick={onClose}
+                className="px-5 py-2 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 shadow-md shadow-emerald-600/20 transition-all"
+              >
+                {mode === 'reeval' ? 'Done & Close' : 'Done & View Dashboard'}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

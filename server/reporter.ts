@@ -11,7 +11,7 @@ import {
 } from "./storage.js";
 import { sanitizeJobEvaluation } from "./evaluator.js";
 
-export function generateMarkdownReport(jobs: Job[], profileId?: string): string {
+export function generateMarkdownReport(jobs: Job[], profileId?: string, saveHistory: boolean = false): string {
   const pid = profileId || getActiveProfileId();
   const config = loadConfig();
   const minThreshold = config.minimum_score || 65;
@@ -86,8 +86,8 @@ export function generateMarkdownReport(jobs: Job[], profileId?: string): string 
     fs.writeFileSync(REPORT_PATH, md, "utf-8");
   }
 
-  try {
-    if (evaluatedJobs.length > 0) {
+  if (saveHistory && evaluatedJobs.length > 0) {
+    try {
       const profileReportsDir = getProfileReportsDir(pid);
       const store = loadProfilesData();
       const profileObj = store.profiles.find((p) => p.id === pid);
@@ -103,9 +103,9 @@ export function generateMarkdownReport(jobs: Job[], profileId?: string): string 
       const historyFilename = `report_${cleanProfileName || "scan"}_${dateFormatted}.md`;
       const historyFile = path.join(profileReportsDir, historyFilename);
       fs.writeFileSync(historyFile, md, "utf-8");
+    } catch (err) {
+      console.error("Error saving historical report file:", err);
     }
-  } catch (err) {
-    console.error("Error saving historical report file:", err);
   }
 
   return md;

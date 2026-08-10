@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Settings, Save, Check, Plus, Trash2, Building, Sliders, MapPin, Zap,
   DollarSign, Search, Briefcase, X, Clock, Sparkles, User, Copy, FileText,
-  Upload, Loader2, ChevronDown, UserPlus, RefreshCw, Layers, Users, AlertTriangle
+  Upload, Loader2, ChevronDown, UserPlus, RefreshCw, Layers, Users, AlertTriangle,
+  Folder, FolderPlus, Edit2, ArrowRight, Tag, Filter
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { AppConfig, CompanyConfig, ResumeData, UserProfile } from '../types';
+import { AppConfig, CompanyConfig, ResumeData, UserProfile, IgnoredCompanyGroup } from '../types';
 
 interface ConfigEditorProps {
   config: AppConfig;
@@ -87,9 +88,20 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
 
   // Config Form Adders
   const [newCompanyName, setNewCompanyName] = useState('');
+  const [newIgnoredCompanyName, setNewIgnoredCompanyName] = useState('');
   const [newRoleQuery, setNewRoleQuery] = useState('');
   const [newLocation, setNewLocation] = useState('');
   const [showYamlModal, setShowYamlModal] = useState(false);
+
+  // Ignored Companies Grouping States
+  const [ignoredSearchQuery, setIgnoredSearchQuery] = useState('');
+  const [showCreateGroupForm, setShowCreateGroupForm] = useState(false);
+  const [newGroupNameInput, setNewGroupNameInput] = useState('');
+  const [newGroupDescInput, setNewGroupDescInput] = useState('');
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editingGroupName, setEditingGroupName] = useState('');
+  const [editingGroupDesc, setEditingGroupDesc] = useState('');
+  const [quickAddCompanyInputs, setQuickAddCompanyInputs] = useState<Record<string, string>>({});
 
   // Sync state whenever active profile changes
   useEffect(() => {
@@ -106,8 +118,22 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
     yaml += `target_companies_enabled: ${cfg.target_companies_enabled !== false}\n`;
     yaml += "companies:\n";
     (cfg.companies || []).forEach((c) => {
-      yaml += `  - name: "${c.name}"\n    enabled: ${c.enabled}\n    provider: "${c.provider}"\n`;
+      yaml += `  - name: "${c.name}"\n    enabled: ${c.enabled}\n`;
     });
+    yaml += `ignored_companies_enabled: ${cfg.ignored_companies_enabled !== false}\n`;
+    yaml += "ignored_companies:\n";
+    (cfg.ignored_companies || []).forEach((ic) => {
+      yaml += `  - "${ic}"\n`;
+    });
+    if (cfg.ignored_company_groups && cfg.ignored_company_groups.length > 0) {
+      yaml += "ignored_company_groups:\n";
+      cfg.ignored_company_groups.forEach((g) => {
+        yaml += `  - id: "${g.id}"\n    name: "${g.name}"\n    enabled: ${g.enabled !== false}\n    description: "${g.description || ''}"\n    companies:\n`;
+        (g.companies || []).forEach((c) => {
+          yaml += `      - "${c}"\n`;
+        });
+      });
+    }
     yaml += "target_roles:\n";
     (cfg.target_roles || []).forEach((r) => {
       yaml += `  - "${r}"\n`;
@@ -127,9 +153,6 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
     yaml += `auto_evaluate: ${cfg.auto_evaluate}\n`;
     yaml += `gemini_model: "${cfg.gemini_model || "gemini-3.1-flash-lite"}"\n`;
     yaml += `max_jobs_per_company: ${cfg.max_jobs_per_company || 5}\n`;
-    if (cfg.company_size_filter) {
-      yaml += `company_size_filter: "${cfg.company_size_filter}"\n`;
-    }
     if (cfg.hard_blockers) {
       yaml += `hard_blockers: |\n  ${cfg.hard_blockers.split("\n").join("\n  ")}\n`;
     }
@@ -288,9 +311,16 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
     onSaveProfile(activeProfileId, profileName, newCfg, resumeContent, localParsedSkills);
   };
 
+  const isCompanyItemEnabled = (c: any) => Boolean(c) && (c.enabled === true || String(c.enabled).toLowerCase() === 'true');
+
   const toggleCompany = (index: number) => {
-    const updated = [...config.companies];
-    updated[index].enabled = !updated[index].enabled;
+    const updated = config.companies.map((c, i) => {
+      if (i === index) {
+        const currentlyEnabled = c.enabled === true || String(c.enabled).toLowerCase() === 'true';
+        return { ...c, enabled: !currentlyEnabled };
+      }
+      return { ...c, enabled: c.enabled === true || String(c.enabled).toLowerCase() === 'true' };
+    });
     saveUpdatedConfig({ ...config, companies: updated });
   };
 
@@ -308,6 +338,233 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
     };
     saveUpdatedConfig({ ...config, companies: [...config.companies, newComp] });
     setNewCompanyName('');
+  };
+
+  const isCompanyIgnored = (companyName: string) => {
+    const nameLower = companyName.toLowerCase().trim();
+    if (!nameLower) return false;
+    const uncategorized = (config.ignored_companies || []).some((c) => c.toLowerCase().trim() === nameLower);
+    if (uncategorized) return true;
+    const groups = config.ignored_company_groups || [];
+    return groups.some((g) => (g.companies || []).some((c) => c.toLowerCase().trim() === nameLower));
+  };
+
+  const addIgnoredCompany = (nameToAdd?: string, targetGroupId: string | 'uncategorized' = 'uncategorized') => {
+    const name = (nameToAdd || newIgnoredCompanyName).trim();
+    if (!name) return;
+    addIgnoredCompanyToGroup(targetGroupId, name);
+    if (!nameToAdd) setNewIgnoredCompanyName('');
+  };
+
+  const addIgnoredCompanyToGroup = (groupId: string | 'uncategorized', companyName: string) => {
+    const name = companyName.trim();
+    if (!name) return;
+
+    if (groupId === 'uncategorized') {
+      const current = config.ignored_companies || [];
+      if (!current.some((c) => c.toLowerCase() === name.toLowerCase())) {
+        saveUpdatedConfig({ ...config, ignored_companies: [...current, name] });
+      }
+    } else {
+      const groups = (config.ignored_company_groups || []).map((g) => {
+        if (g.id === groupId) {
+          const currentCompanies = g.companies || [];
+          if (!currentCompanies.some((c) => c.toLowerCase() === name.toLowerCase())) {
+            return { ...g, companies: [...currentCompanies, name] };
+          }
+        }
+        return g;
+      });
+      saveUpdatedConfig({ ...config, ignored_company_groups: groups });
+    }
+  };
+
+  const deleteIgnoredCompany = (nameToRemove: string) => {
+    removeIgnoredCompanyFromGroup('uncategorized', nameToRemove);
+  };
+
+  const removeIgnoredCompanyFromGroup = (groupId: string | 'uncategorized', companyName: string) => {
+    const nameLower = companyName.toLowerCase().trim();
+    if (groupId === 'uncategorized') {
+      const current = config.ignored_companies || [];
+      saveUpdatedConfig({
+        ...config,
+        ignored_companies: current.filter((c) => c.toLowerCase().trim() !== nameLower),
+      });
+    } else {
+      const groups = (config.ignored_company_groups || []).map((g) => {
+        if (g.id === groupId) {
+          return {
+            ...g,
+            companies: (g.companies || []).filter((c) => c.toLowerCase().trim() !== nameLower),
+          };
+        }
+        return g;
+      });
+      saveUpdatedConfig({ ...config, ignored_company_groups: groups });
+    }
+  };
+
+  const moveIgnoredCompany = (companyName: string, fromGroupId: string | 'uncategorized', toGroupId: string | 'uncategorized') => {
+    if (fromGroupId === toGroupId) return;
+
+    const nameLower = companyName.toLowerCase().trim();
+    let updatedUncategorized = [...(config.ignored_companies || [])];
+    if (fromGroupId === 'uncategorized') {
+      updatedUncategorized = updatedUncategorized.filter((c) => c.toLowerCase().trim() !== nameLower);
+    } else if (toGroupId === 'uncategorized') {
+      if (!updatedUncategorized.some((c) => c.toLowerCase().trim() === nameLower)) {
+        updatedUncategorized.push(companyName.trim());
+      }
+    }
+
+    let updatedGroups = (config.ignored_company_groups || []).map((g) => {
+      let comps = g.companies || [];
+      if (g.id === fromGroupId) {
+        comps = comps.filter((c) => c.toLowerCase().trim() !== nameLower);
+      }
+      if (g.id === toGroupId) {
+        if (!comps.some((c) => c.toLowerCase().trim() === nameLower)) {
+          comps = [...comps, companyName.trim()];
+        }
+      }
+      return { ...g, companies: comps };
+    });
+
+    saveUpdatedConfig({
+      ...config,
+      ignored_companies: updatedUncategorized,
+      ignored_company_groups: updatedGroups,
+    });
+  };
+
+  const createIgnoredGroup = (name: string, description?: string) => {
+    const groupName = name.trim();
+    if (!groupName) return;
+    const currentGroups = config.ignored_company_groups || [];
+    const newGroup: IgnoredCompanyGroup = {
+      id: `group_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name: groupName,
+      description: description?.trim() || '',
+      enabled: true,
+      companies: [],
+    };
+    saveUpdatedConfig({
+      ...config,
+      ignored_company_groups: [...currentGroups, newGroup],
+    });
+    setNewGroupNameInput('');
+    setNewGroupDescInput('');
+    setShowCreateGroupForm(false);
+  };
+
+  const toggleGroupEnabled = (groupId: string) => {
+    const groups = (config.ignored_company_groups || []).map((g) => {
+      if (g.id === groupId) {
+        return { ...g, enabled: g.enabled === false };
+      }
+      return g;
+    });
+    saveUpdatedConfig({ ...config, ignored_company_groups: groups });
+  };
+
+  const deleteIgnoredGroup = (groupId: string) => {
+    const targetGroup = (config.ignored_company_groups || []).find((g) => g.id === groupId);
+    const remainingGroups = (config.ignored_company_groups || []).filter((g) => g.id !== groupId);
+    const groupCompanies = targetGroup?.companies || [];
+
+    const currentUncategorized = config.ignored_companies || [];
+    const updatedUncategorized = [...currentUncategorized];
+    groupCompanies.forEach((c) => {
+      if (!updatedUncategorized.some((uc) => uc.toLowerCase().trim() === c.toLowerCase().trim())) {
+        updatedUncategorized.push(c.trim());
+      }
+    });
+
+    saveUpdatedConfig({
+      ...config,
+      ignored_companies: updatedUncategorized,
+      ignored_company_groups: remainingGroups,
+    });
+  };
+
+  const saveGroupEdit = (groupId: string) => {
+    if (!editingGroupName.trim()) return;
+    const groups = (config.ignored_company_groups || []).map((g) => {
+      if (g.id === groupId) {
+        return {
+          ...g,
+          name: editingGroupName.trim(),
+          description: editingGroupDesc.trim(),
+        };
+      }
+      return g;
+    });
+    saveUpdatedConfig({ ...config, ignored_company_groups: groups });
+    setEditingGroupId(null);
+  };
+
+  const loadPresetIgnoredGroups = () => {
+    const presetGroups: IgnoredCompanyGroup[] = [
+      {
+        id: 'group_searched',
+        name: 'Already Searched / Reviewed',
+        description: 'Companies whose job postings have already been searched or evaluated',
+        enabled: true,
+        companies: [],
+      },
+      {
+        id: 'group_too_small',
+        name: 'Companies Too Small',
+        description: 'Startups or small organizations below headcount requirements',
+        enabled: true,
+        companies: [],
+      },
+      {
+        id: 'group_agencies',
+        name: 'Staffing & Third-Party Agencies',
+        description: 'Recruiting agencies, staffing providers, and contracting agencies',
+        enabled: true,
+        companies: ['Revature', 'CyberCoders', 'TekSystems', 'Motion Recruitment'],
+      },
+    ];
+
+    const currentGroups = config.ignored_company_groups || [];
+    const existingNames = new Set(currentGroups.map((g) => g.name.toLowerCase()));
+    const toAdd = presetGroups.filter((pg) => !existingNames.has(pg.name.toLowerCase()));
+
+    saveUpdatedConfig({
+      ...config,
+      ignored_company_groups: [...currentGroups, ...toAdd],
+    });
+  };
+
+  const copyAllTargetsToIgnored = (targetGroupId: string | 'uncategorized' = 'uncategorized') => {
+    const targetNames = (config.companies || []).map((c) => c.name.trim()).filter(Boolean);
+    if (targetGroupId === 'uncategorized') {
+      const currentIgnored = config.ignored_companies || [];
+      const updated = [...currentIgnored];
+      targetNames.forEach((name) => {
+        if (!isCompanyIgnored(name)) {
+          updated.push(name);
+        }
+      });
+      saveUpdatedConfig({ ...config, ignored_companies: updated });
+    } else {
+      const groups = (config.ignored_company_groups || []).map((g) => {
+        if (g.id === targetGroupId) {
+          const comps = [...(g.companies || [])];
+          targetNames.forEach((name) => {
+            if (!comps.some((c) => c.toLowerCase() === name.toLowerCase())) {
+              comps.push(name);
+            }
+          });
+          return { ...g, companies: comps };
+        }
+        return g;
+      });
+      saveUpdatedConfig({ ...config, ignored_company_groups: groups });
+    }
   };
 
   const addRoleQuery = (queryToAdd?: string) => {
@@ -760,40 +1017,6 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                   })()}
                 </div>
               </div>
-
-              {/* Company Size Filter Block */}
-              <div>
-                <div className="flex items-center space-x-2 mb-3">
-                  <Users className="w-4 h-4 text-emerald-600" />
-                  <h3 className="font-bold text-slate-900 text-sm">Company Size Preference</h3>
-                </div>
-
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
-                  <div>
-                    <label className="font-bold text-slate-800 block text-[11px] mb-1">
-                      Target Headcount Range:
-                    </label>
-                    <select
-                      value={config.company_size_filter || 'any'}
-                      onChange={(e) =>
-                        setConfig({
-                          ...config,
-                          company_size_filter: e.target.value as any,
-                        })
-                      }
-                      className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 font-medium focus:outline-none focus:border-emerald-500 shadow-2xs"
-                    >
-                      <option value="any">Any Company Size (No Preference)</option>
-                      <option value="startup">Startup & Seed / Growth (&lt;200 employees)</option>
-                      <option value="midsize">Mid-size Companies (200 - 1,000 employees)</option>
-                      <option value="enterprise">Large Enterprise & Fortune 500 (1,000+ employees)</option>
-                    </select>
-                  </div>
-                  <p className="text-[10px] text-slate-500 pt-1">
-                    Evaluates company headcount extracted from job postings and flags size mismatches.
-                  </p>
-                </div>
-              </div>
             </div>
 
             {/* Match Thresholds & Preferred Locations */}
@@ -1022,7 +1245,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                             className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
                           />
                           <Building className={`w-4 h-4 ${isCompanyFilteringEnabled ? 'text-emerald-600' : 'text-slate-400'}`} />
-                          <h3 className="font-bold text-slate-900 text-sm">Target Company Providers</h3>
+                          <h3 className="font-bold text-slate-900 text-sm">Target Companies</h3>
                         </label>
                         <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
                           isCompanyFilteringEnabled
@@ -1033,14 +1256,28 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                         </span>
                       </div>
 
-                      <div className="flex items-center space-x-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-slate-500 text-[11px] font-mono bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                          {config.companies.filter((c) => c.enabled).length} of {config.companies.length} Companies Selected
+                          {config.companies.filter(isCompanyItemEnabled).length} of {config.companies.length} Companies Selected
                         </span>
+                        {config.companies.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const searchedGroupId = (config.ignored_company_groups || []).find((g) => g.name.toLowerCase().includes('searched'))?.id || 'uncategorized';
+                              copyAllTargetsToIgnored(searchedGroupId);
+                            }}
+                            className="inline-flex items-center gap-1 text-[10px] text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 px-2 py-0.5 rounded border border-amber-200/80 font-medium transition-colors"
+                            title="Copy all target companies into the Ignored Companies list"
+                          >
+                            <Copy className="w-3 h-3" />
+                            Copy All to Ignore List
+                          </button>
+                        )}
                         {config.companies.length > 0 && isCompanyFilteringEnabled && (
                           <button
                             type="button"
-                            onClick={() => setConfig({ ...config, companies: [] })}
+                            onClick={() => saveUpdatedConfig({ ...config, companies: [] })}
                             className="text-[10px] text-rose-600 hover:text-rose-800 hover:underline font-medium"
                           >
                             Clear All
@@ -1069,7 +1306,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                             <div
                               key={index}
                               className={`p-3 rounded-xl border transition-all flex items-center justify-between ${
-                                company.enabled && isCompanyFilteringEnabled
+                                isCompanyItemEnabled(company) && isCompanyFilteringEnabled
                                   ? 'bg-emerald-50/40 border-emerald-200/80 shadow-2xs'
                                   : 'bg-slate-50 border-slate-200 opacity-60'
                               }`}
@@ -1078,26 +1315,45 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                                 <input
                                   type="checkbox"
                                   disabled={!isCompanyFilteringEnabled}
-                                  checked={company.enabled}
+                                  checked={isCompanyItemEnabled(company)}
                                   onChange={() => toggleCompany(index)}
                                   className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
                                 />
                                 <div>
                                   <h4 className="font-bold text-slate-900 text-xs">{company.name}</h4>
-                                  <p className="text-[10px] text-slate-500">
-                                    Adapter: <span className="font-mono text-emerald-700 font-semibold">{company.provider}</span>
-                                  </p>
                                 </div>
                               </div>
 
-                              <button
-                                disabled={!isCompanyFilteringEnabled}
-                                onClick={() => deleteCompany(index)}
-                                className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
-                                title="Remove Target"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                              <div className="flex items-center space-x-1">
+                                {(() => {
+                                  const alreadyIgnored = isCompanyIgnored(company.name);
+                                  const searchedGroupId = (config.ignored_company_groups || []).find((g) => g.name.toLowerCase().includes('searched'))?.id || 'uncategorized';
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => addIgnoredCompany(company.name, searchedGroupId)}
+                                      disabled={alreadyIgnored}
+                                      className={`p-1 rounded transition-colors ${
+                                        alreadyIgnored
+                                          ? 'text-slate-300 cursor-not-allowed'
+                                          : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
+                                      }`}
+                                      title={alreadyIgnored ? "Already in Ignore List or Groups" : "Copy to Ignore List"}
+                                    >
+                                      <Copy className="w-3.5 h-3.5" />
+                                    </button>
+                                  );
+                                })()}
+
+                                <button
+                                  disabled={!isCompanyFilteringEnabled}
+                                  onClick={() => deleteCompany(index)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
+                                  title="Remove Target"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -1116,15 +1372,14 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                           placeholder="Company Name (e.g., Stripe, Meta, Apple)"
                           value={newCompanyName}
                           onChange={(e) => setNewCompanyName(e.target.value)}
-                          className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-emerald-500 shrink-0 w-full sm:w-48 disabled:bg-slate-100"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              addCompany();
+                            }
+                          }}
+                          className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-emerald-500 shrink-0 w-full sm:w-64 disabled:bg-slate-100"
                         />
-                        <select
-                          value="LinkedIn"
-                          disabled
-                          className="bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700 cursor-not-allowed shrink-0"
-                        >
-                          <option value="LinkedIn">LinkedIn</option>
-                        </select>
 
                         <button
                           disabled={!isCompanyFilteringEnabled}
@@ -1135,6 +1390,497 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                           Add Target Company
                         </button>
                       </div>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+
+            {/* Ignored Companies Section with Grouping Support */}
+            <div className="pt-6 border-t border-slate-200">
+              {(() => {
+                const isIgnoredCompaniesEnabled = config.ignored_companies_enabled !== false;
+                const uncategorizedList = config.ignored_companies || [];
+                const groupsList = config.ignored_company_groups || [];
+
+                // Calculate total ignored companies across uncategorized + active groups
+                const activeGroupCompanies = groupsList
+                  .filter((g) => g.enabled !== false)
+                  .flatMap((g) => g.companies || []);
+                const totalIgnoredCount = new Set([
+                  ...uncategorizedList,
+                  ...activeGroupCompanies,
+                ]).size;
+
+                const filterText = ignoredSearchQuery.toLowerCase().trim();
+
+                return (
+                  <>
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                      <div className="flex items-center space-x-3">
+                        <label className="flex items-center space-x-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={isIgnoredCompaniesEnabled}
+                            onChange={(e) => saveUpdatedConfig({ ...config, ignored_companies_enabled: e.target.checked })}
+                            className="w-4 h-4 accent-rose-600 rounded cursor-pointer"
+                          />
+                          <Building className={`w-4 h-4 ${isIgnoredCompaniesEnabled ? 'text-rose-600' : 'text-slate-400'}`} />
+                          <h3 className="font-bold text-slate-900 text-sm">Ignored Companies List & Groups</h3>
+                        </label>
+                        <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
+                          isIgnoredCompaniesEnabled
+                            ? 'bg-rose-100 text-rose-800 border-rose-200'
+                            : 'bg-slate-200 text-slate-600 border-slate-300'
+                        }`}>
+                          {isIgnoredCompaniesEnabled ? 'Active Filter' : 'Disabled'}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-slate-600 text-[11px] font-mono bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 font-semibold">
+                          {totalIgnoredCount} Companies Ignored ({groupsList.length} Groups)
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() => setShowCreateGroupForm(!showCreateGroupForm)}
+                          className="inline-flex items-center text-xs text-white bg-rose-700 hover:bg-rose-800 px-3 py-1 rounded-lg font-bold shadow-2xs transition-colors"
+                        >
+                          <FolderPlus className="w-3.5 h-3.5 mr-1.5" />
+                          Create Group
+                        </button>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-slate-500 mb-4">
+                      Group ignored companies by reason (e.g., <strong>Already Searched</strong>, <strong>Companies Too Small</strong>, or <strong>Staffing Agencies</strong>). Jobs matching active ignored groups or list will be skipped during live scans.
+                    </p>
+
+                    {/* Inline Create Group Form */}
+                    {showCreateGroupForm && (
+                      <div className="bg-rose-50/80 border border-rose-200 p-4 rounded-xl mb-4 space-y-3 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-bold text-xs text-rose-900 flex items-center gap-1.5">
+                            <FolderPlus className="w-4 h-4 text-rose-600" />
+                            Create New Ignored Company Group
+                          </h4>
+                          <button
+                            type="button"
+                            onClick={() => setShowCreateGroupForm(false)}
+                            className="text-slate-400 hover:text-slate-600 p-0.5 rounded"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        {/* Quick Presets */}
+                        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                          <span className="text-slate-500 font-medium mr-1">Quick Presets:</span>
+                          {[
+                            { name: 'Already Searched / Reviewed', desc: 'Companies already interviewed with or reviewed' },
+                            { name: 'Companies Too Small (<500)', desc: 'Startups or small organizations below headcount preference' },
+                            { name: 'Staffing & Recruiting Agencies', desc: 'Recruiting firms and third-party staffing providers' },
+                            { name: 'Culture or Compensation Mismatch', desc: 'Companies outside salary target or cultural preferences' },
+                          ].map((preset, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => {
+                                setNewGroupNameInput(preset.name);
+                                setNewGroupDescInput(preset.desc);
+                              }}
+                              className="px-2 py-0.5 bg-white border border-rose-200 text-rose-800 rounded-md hover:bg-rose-100/70 font-medium text-[10px]"
+                            >
+                              + {preset.name}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <input
+                            type="text"
+                            placeholder="Group Name (e.g., Already Searched)"
+                            value={newGroupNameInput}
+                            onChange={(e) => setNewGroupNameInput(e.target.value)}
+                            className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-rose-500"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Optional Description (e.g. Candidates already applied/searched)"
+                            value={newGroupDescInput}
+                            onChange={(e) => setNewGroupDescInput(e.target.value)}
+                            className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-rose-500"
+                          />
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setShowCreateGroupForm(false)}
+                            className="px-3 py-1 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-200"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => createIgnoredGroup(newGroupNameInput, newGroupDescInput)}
+                            disabled={!newGroupNameInput.trim()}
+                            className="px-3 py-1 bg-rose-700 hover:bg-rose-800 disabled:bg-slate-300 text-white rounded-lg text-xs font-bold transition-colors"
+                          >
+                            Save Group
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Filter / Search Bar */}
+                    {(groupsList.length > 0 || uncategorizedList.length > 0) && (
+                      <div className="mb-4 flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                          <input
+                            type="text"
+                            placeholder="Search ignored companies or groups..."
+                            value={ignoredSearchQuery}
+                            onChange={(e) => setIgnoredSearchQuery(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-rose-500"
+                          />
+                        </div>
+                        {ignoredSearchQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setIgnoredSearchQuery('')}
+                            className="text-xs text-slate-500 hover:text-slate-800 font-medium"
+                          >
+                            Clear Filter
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    <div className={`transition-all space-y-4 ${!isIgnoredCompaniesEnabled ? 'opacity-40 pointer-events-none grayscale-[40%]' : ''}`}>
+                      {/* Render Groups */}
+                      {groupsList.map((group) => {
+                        const isEditing = editingGroupId === group.id;
+                        const groupCompanies = group.companies || [];
+                        const filteredCompanies = filterText
+                          ? groupCompanies.filter(
+                              (c) =>
+                                c.toLowerCase().includes(filterText) ||
+                                group.name.toLowerCase().includes(filterText)
+                            )
+                          : groupCompanies;
+
+                        if (filterText && filteredCompanies.length === 0 && !group.name.toLowerCase().includes(filterText)) {
+                          return null;
+                        }
+
+                        const isGroupActive = group.enabled !== false;
+
+                        return (
+                          <div
+                            key={group.id}
+                            className={`border rounded-xl p-4 transition-all ${
+                              isGroupActive
+                                ? 'bg-slate-50/80 border-slate-200/90 shadow-2xs'
+                                : 'bg-slate-100/50 border-slate-200 opacity-60'
+                            }`}
+                          >
+                            {/* Group Card Header */}
+                            <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-2.5 border-b border-slate-200/70">
+                              <div className="flex items-center space-x-2.5 flex-1 min-w-[200px]">
+                                <input
+                                  type="checkbox"
+                                  checked={isGroupActive}
+                                  onChange={() => toggleGroupEnabled(group.id)}
+                                  className="w-4 h-4 accent-rose-600 rounded cursor-pointer"
+                                  title={isGroupActive ? 'Disable Group Filter' : 'Enable Group Filter'}
+                                />
+                                <Folder className={`w-4 h-4 ${isGroupActive ? 'text-rose-600' : 'text-slate-400'}`} />
+
+                                {isEditing ? (
+                                  <div className="flex items-center gap-1.5 flex-1">
+                                    <input
+                                      type="text"
+                                      value={editingGroupName}
+                                      onChange={(e) => setEditingGroupName(e.target.value)}
+                                      className="bg-white border border-rose-300 rounded px-2 py-0.5 text-xs font-bold text-slate-900"
+                                    />
+                                    <input
+                                      type="text"
+                                      value={editingGroupDesc}
+                                      onChange={(e) => setEditingGroupDesc(e.target.value)}
+                                      placeholder="Description"
+                                      className="bg-white border border-slate-300 rounded px-2 py-0.5 text-xs text-slate-600"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => saveGroupEdit(group.id)}
+                                      className="p-1 bg-emerald-600 text-white rounded hover:bg-emerald-700"
+                                    >
+                                      <Check className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div>
+                                    <div className="flex items-center space-x-2">
+                                      <h4 className="font-bold text-slate-900 text-xs">{group.name}</h4>
+                                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-200/80 text-slate-700 font-semibold">
+                                        {groupCompanies.length}
+                                      </span>
+                                    </div>
+                                    {group.description && (
+                                      <p className="text-[11px] text-slate-500 mt-0.5">{group.description}</p>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="flex items-center space-x-1">
+                                {!isEditing && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingGroupId(group.id);
+                                      setEditingGroupName(group.name);
+                                      setEditingGroupDesc(group.description || '');
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded"
+                                    title="Edit group name/description"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => deleteIgnoredGroup(group.id)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded"
+                                  title="Delete Group (companies will be preserved in Uncategorized list)"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Companies in this Group */}
+                            {filteredCompanies.length > 0 ? (
+                              <div className="flex flex-wrap gap-2 mb-3">
+                                {filteredCompanies.map((companyName, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-white text-slate-800 border border-slate-200 shadow-2xs group/tag"
+                                  >
+                                    <Building className="w-3 h-3 text-rose-500" />
+                                    {companyName}
+
+                                    {/* Move to another group selector */}
+                                    <select
+                                      value={group.id}
+                                      onChange={(e) =>
+                                        moveIgnoredCompany(
+                                          companyName,
+                                          group.id,
+                                          e.target.value
+                                        )
+                                      }
+                                      className="text-[10px] bg-slate-100 text-slate-600 hover:text-slate-900 border-0 rounded px-1 py-0.5 cursor-pointer font-medium focus:outline-none"
+                                      title="Move to another group"
+                                    >
+                                      <option value={group.id} disabled>
+                                        Move to...
+                                      </option>
+                                      <option value="uncategorized">Uncategorized</option>
+                                      {groupsList
+                                        .filter((g) => g.id !== group.id)
+                                        .map((otherG) => (
+                                          <option key={otherG.id} value={otherG.id}>
+                                            {otherG.name}
+                                          </option>
+                                        ))}
+                                    </select>
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        removeIgnoredCompanyFromGroup(group.id, companyName)
+                                      }
+                                      className="p-0.5 text-slate-400 hover:text-rose-700 hover:bg-rose-50 rounded transition-colors"
+                                      title="Remove from group"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-slate-400 italic mb-3">
+                                No companies in this group yet. Add company names below.
+                              </p>
+                            )}
+
+                            {/* Add Company directly inside group */}
+                            <div className="flex items-center gap-2 pt-1">
+                              <input
+                                type="text"
+                                placeholder={`Add company to "${group.name}"...`}
+                                value={quickAddCompanyInputs[group.id] || ''}
+                                onChange={(e) =>
+                                  setQuickAddCompanyInputs({
+                                    ...quickAddCompanyInputs,
+                                    [group.id]: e.target.value,
+                                  })
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    const val = quickAddCompanyInputs[group.id];
+                                    if (val) {
+                                      addIgnoredCompanyToGroup(group.id, val);
+                                      setQuickAddCompanyInputs({
+                                        ...quickAddCompanyInputs,
+                                        [group.id]: '',
+                                      });
+                                    }
+                                  }
+                                }}
+                                className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs text-slate-900 focus:outline-none focus:border-rose-500 max-w-xs"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const val = quickAddCompanyInputs[group.id];
+                                  if (val) {
+                                    addIgnoredCompanyToGroup(group.id, val);
+                                    setQuickAddCompanyInputs({
+                                      ...quickAddCompanyInputs,
+                                      [group.id]: '',
+                                    });
+                                  }
+                                }}
+                                className="px-2.5 py-1 text-xs font-bold bg-slate-800 hover:bg-slate-900 text-white rounded-lg transition-colors"
+                              >
+                                + Add
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Uncategorized / General Ignored List */}
+                      {(() => {
+                        const filteredUncategorized = filterText
+                          ? uncategorizedList.filter((c) => c.toLowerCase().includes(filterText))
+                          : uncategorizedList;
+
+                        if (filterText && filteredUncategorized.length === 0 && groupsList.length > 0) {
+                          return null;
+                        }
+
+                        return (
+                          <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-4">
+                            <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-200/70">
+                              <div className="flex items-center space-x-2">
+                                <Building className="w-4 h-4 text-slate-500" />
+                                <h4 className="font-bold text-slate-800 text-xs">
+                                  General / Uncategorized Ignored Companies
+                                </h4>
+                                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-200 text-slate-700 font-semibold">
+                                  {uncategorizedList.length}
+                                </span>
+                              </div>
+
+                              {uncategorizedList.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => saveUpdatedConfig({ ...config, ignored_companies: [] })}
+                                  className="text-[10px] text-rose-600 hover:text-rose-800 hover:underline font-medium"
+                                >
+                                  Clear Uncategorized
+                                </button>
+                              )}
+                            </div>
+
+                            {filteredUncategorized.length > 0 ? (
+                              <div className="flex flex-wrap gap-2 mb-3">
+                                {filteredUncategorized.map((companyName, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-white text-slate-800 border border-slate-200 shadow-2xs"
+                                  >
+                                    <Building className="w-3 h-3 text-slate-400" />
+                                    {companyName}
+
+                                    {groupsList.length > 0 && (
+                                      <select
+                                        value="uncategorized"
+                                        onChange={(e) =>
+                                          moveIgnoredCompany(
+                                            companyName,
+                                            'uncategorized',
+                                            e.target.value
+                                          )
+                                        }
+                                        className="text-[10px] bg-slate-100 text-slate-600 hover:text-slate-900 border-0 rounded px-1 py-0.5 cursor-pointer font-medium focus:outline-none"
+                                        title="Organize into group"
+                                      >
+                                        <option value="uncategorized" disabled>
+                                          Move to Group...
+                                        </option>
+                                        {groupsList.map((g) => (
+                                          <option key={g.id} value={g.id}>
+                                            {g.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    )}
+
+                                    <button
+                                      type="button"
+                                      onClick={() => deleteIgnoredCompany(companyName)}
+                                      className="p-0.5 text-slate-400 hover:text-rose-700 hover:bg-rose-50 rounded transition-colors"
+                                      title="Remove from ignore list"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-slate-500 mb-3 font-medium">
+                                No uncategorized ignored companies. Add names below or use groups above.
+                              </p>
+                            )}
+
+                            {/* Add Uncategorized Company */}
+                            <div className="flex flex-wrap items-center gap-2 pt-1">
+                              <input
+                                type="text"
+                                disabled={!isIgnoredCompaniesEnabled}
+                                placeholder="Company Name to Ignore (e.g. Revature, CyberCoders)"
+                                value={newIgnoredCompanyName}
+                                onChange={(e) => setNewIgnoredCompanyName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    addIgnoredCompany();
+                                  }
+                                }}
+                                className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-rose-500 shrink-0 w-full sm:w-72 disabled:bg-slate-100"
+                              />
+
+                              <button
+                                disabled={!isIgnoredCompaniesEnabled}
+                                onClick={() => addIgnoredCompany()}
+                                className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-900 text-white shadow-xs transition-colors shrink-0 disabled:bg-slate-400"
+                              >
+                                <Plus className="w-3.5 h-3.5 mr-1" />
+                                Add Ignored Company
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </>
                 );

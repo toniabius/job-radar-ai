@@ -12,6 +12,24 @@ companies:
   - name: "Google"
     enabled: true
     provider: "LinkedIn"
+  - name: "Meta"
+    enabled: true
+    provider: "LinkedIn"
+  - name: "Adobe"
+    enabled: true
+    provider: "LinkedIn"
+  - name: "SpaceXAI"
+    enabled: true
+    provider: "LinkedIn"
+  - name: "Airbnb"
+    enabled: true
+    provider: "LinkedIn"
+  - name: "Microsoft"
+    enabled: true
+    provider: "LinkedIn"
+target_companies_enabled: true
+ignored_companies_enabled: true
+ignored_companies: []
 target_roles:
   - "Software Engineer"
 locations:
@@ -32,7 +50,7 @@ skills:
   - "Gemini API"
   - "Express"
   - "Distributed Systems"
-minimum_score: 65
+minimum_score: 75
 min_salary: 200000
 salary_currency: "USD"
 linkedin_time_filter: "past_24h"
@@ -43,3 +61,4 @@ time_filter_unit: "hours"
 auto_evaluate: true
 gemini_model: "gemini-3.1-flash-lite"
 max_jobs_per_company: 5
+hard_blockers: ""

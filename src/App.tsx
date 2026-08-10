@@ -11,6 +11,7 @@ import { ScanLogsView } from './components/ScanLogsView';
 import { Job, AppConfig, ResumeData, UserProfile, PipelineLog } from './types';
 import { Search, Sparkles, Filter, ArrowUpDown, Building, DollarSign, MapPin, X, Clock, User, Trash2, CheckCircle2 } from 'lucide-react';
 import { parseLocationGroup, parseMinSalary } from './utils/location';
+import { playCompletionChime } from './utils/audio';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'database' | 'config' | 'report' | 'logs'>('dashboard');
@@ -188,6 +189,14 @@ export default function App() {
     setLastScanResult(null);
   };
 
+  const handleStopFetching = async () => {
+    try {
+      await fetch('/api/pipeline/stop-fetching', { method: 'POST' });
+    } catch (err) {
+      console.error('Stop fetching request error:', err);
+    }
+  };
+
   // Run Pipeline (`python run.py`)
   const handleRunPipeline = async () => {
     setScanModalMode('scan');
@@ -345,6 +354,7 @@ export default function App() {
             setJobs(data.jobs);
           }
           await fetchReport();
+          playCompletionChime();
         }
       } finally {
         clearInterval(pollInterval);
@@ -1122,6 +1132,7 @@ export default function App() {
         isOpen={isScanModalOpen}
         onClose={() => setIsScanModalOpen(false)}
         onCancel={handleCancelPipeline}
+        onStopFetching={handleStopFetching}
         isRunning={isRunningPipeline}
         logs={pipelineLogs}
         geminiModel={config?.gemini_model}

@@ -13,6 +13,31 @@ export const DEFAULT_CONFIG: AppConfig = {
     { name: 'Microsoft', enabled: true, provider: 'LinkedIn' },
   ],
   target_companies_enabled: true,
+  ignored_companies_enabled: true,
+  ignored_companies: [],
+  ignored_company_groups: [
+    {
+      id: 'group_searched',
+      name: 'Already Searched / Reviewed',
+      description: 'Companies whose job postings have already been searched or evaluated',
+      enabled: true,
+      companies: [],
+    },
+    {
+      id: 'group_too_small',
+      name: 'Companies Too Small',
+      description: 'Startups or small organizations below headcount requirements',
+      enabled: true,
+      companies: [],
+    },
+    {
+      id: 'group_agencies',
+      name: 'Staffing & Third-Party Agencies',
+      description: 'Recruiting agencies, staffing providers, and contracting agencies',
+      enabled: true,
+      companies: ['Revature', 'CyberCoders', 'TekSystems', 'Motion Recruitment'],
+    },
+  ],
   target_roles: [
     'Software Engineer',
   ],

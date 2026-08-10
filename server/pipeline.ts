@@ -16,6 +16,7 @@ import { generateMarkdownReport } from "./reporter.js";
 
 export let isPipelineRunning = false;
 export let activePipelineCancelled = false;
+export let stopFetchingRequested = false;
 export let currentPipelineLogs: PipelineLog[] = [];
 export let currentPipelineResult: any = null;
 
@@ -23,10 +24,19 @@ export function setPipelineCancelled(cancelled: boolean): void {
   activePipelineCancelled = cancelled;
 }
 
+export function setStopFetchingRequested(stop: boolean): void {
+  stopFetchingRequested = stop;
+}
+
+export function isStopFetchingRequested(): boolean {
+  return stopFetchingRequested;
+}
+
 export function setIsPipelineRunning(running: boolean): void {
   isPipelineRunning = running;
   if (running) {
     activePipelineCancelled = false;
+    stopFetchingRequested = false;
   }
 }
 
@@ -136,25 +146,38 @@ export async function runPipeline(
     const pipelineStartTime = Date.now();
     addLog("CONFIG", "Loading runtime configuration from config/config.yaml...");
     const config = loadConfig();
-    const isCompanyFilteringEnabled = config.target_companies_enabled !== false;
+    const isCompanyFilteringEnabled = config.target_companies_enabled !== false && String(config.target_companies_enabled).toLowerCase() !== "false";
     const allCompanies = config.companies || [];
-    const activeCompanies = isCompanyFilteringEnabled ? allCompanies.filter((c) => c.enabled) : [];
-    const disabledCompanies = isCompanyFilteringEnabled ? allCompanies.filter((c) => !c.enabled) : allCompanies;
+    const isCompanyEnabled = (c: any) => c && (c.enabled === true || String(c.enabled).toLowerCase() === "true");
+    const activeCompanies = isCompanyFilteringEnabled ? allCompanies.filter(isCompanyEnabled) : [];
+    const disabledCompanies = isCompanyFilteringEnabled ? allCompanies.filter((c) => !isCompanyEnabled(c)) : allCompanies;
     const targetRoles = config.target_roles && config.target_roles.length > 0
       ? config.target_roles
       : ["Software Engineer", "Full Stack AI Engineer"];
 
+    const isIgnoredCompaniesEnabled = config.ignored_companies_enabled !== false;
+    let ignoredCompanies: string[] = [];
+    if (isIgnoredCompaniesEnabled) {
+      const flatList = (config.ignored_companies || []).map((c) => c.trim()).filter(Boolean);
+      const groupLists = (config.ignored_company_groups || [])
+        .filter((g) => g.enabled !== false)
+        .flatMap((g) => (g.companies || []).map((c) => c.trim()))
+        .filter(Boolean);
+      ignoredCompanies = Array.from(new Set([...flatList, ...groupLists]));
+    }
+
     const preferredLocs = config.locations || [];
     const configSummary = isCompanyFilteringEnabled && activeCompanies.length > 0
-      ? `${activeCompanies.length} enabled company target provider(s) out of ${allCompanies.length} configured company entry/entries across ${targetRoles.length} search role queries`
+      ? `${activeCompanies.length} enabled target company/companies out of ${allCompanies.length} configured company entry/entries across ${targetRoles.length} search role queries`
       : `Open Web Search Mode (${isCompanyFilteringEnabled ? "0 enabled target companies" : "Target company filtering disabled"} - searching all jobs in area for specified roles) across ${targetRoles.length} search role queries`;
 
     addLog(
       "CONFIG",
       `Loaded configuration: ${configSummary}`,
       `Target Company Filtering: ${isCompanyFilteringEnabled ? "Enabled" : "Disabled (Open Web Search Mode)"}` +
-      `\nActive Enabled Companies (${activeCompanies.length}): ${activeCompanies.length > 0 ? activeCompanies.map((c) => `${c.name} (${c.provider})`).join(", ") : "None (Open Web Search Mode - searching all target jobs in area)"}` +
-      (disabledCompanies.length > 0 ? `\nDisabled/Bypassed Companies (${disabledCompanies.length}): ${disabledCompanies.map((c) => `${c.name} (${c.provider})`).join(", ")} (${isCompanyFilteringEnabled ? "Disabled in list" : "Bypassed because section is disabled"})` : "") +
+      `\nActive Enabled Companies (${activeCompanies.length}): ${activeCompanies.length > 0 ? activeCompanies.map((c) => c.name).join(", ") : "None (Open Web Search Mode - searching all target jobs in area)"}` +
+      (disabledCompanies.length > 0 ? `\nDisabled/Bypassed Companies (${disabledCompanies.length}): ${disabledCompanies.map((c) => c.name).join(", ")} (${isCompanyFilteringEnabled ? "Disabled in list" : "Bypassed because section is disabled"})` : "") +
+      `\nIgnored Companies Filter: ${isIgnoredCompaniesEnabled ? "Enabled" : "Disabled"} (${ignoredCompanies.length} company/companies ignored${ignoredCompanies.length > 0 ? `: [${ignoredCompanies.join(", ")}]` : ""})` +
       `\nTarget Search Roles (${targetRoles.length}): ${targetRoles.join(", ")}` +
       `\nTarget Locations: ${preferredLocs.length > 0 ? preferredLocs.join(", ") : "Any"}`
     );
@@ -204,7 +227,17 @@ export async function runPipeline(
     }
 
     const scanStartTime = Date.now();
-    const scanData = await fetchLiveLinkedInJobs(activeCompanies, targetRoles, preferredLocs, tfParam, config.min_salary, isCancelled, addLog);
+    const scanData = await fetchLiveLinkedInJobs(
+      activeCompanies,
+      targetRoles,
+      preferredLocs,
+      tfParam,
+      config.min_salary,
+      ignoredCompanies,
+      isCancelled,
+      isStopFetchingRequested,
+      addLog
+    );
     const liveCandidates = scanData.jobs;
     const totalScannedCount = scanData.totalScanned;
     const scanDurationSec = ((Date.now() - scanStartTime) / 1000).toFixed(1);
@@ -213,6 +246,11 @@ export async function runPipeline(
       isPipelineRunning = false;
       currentPipelineResult = { cancelled: true, summary: "Scan cancelled by user." };
       return { success: false, cancelled: true, summary: "Scan cancelled by user.", logs };
+    }
+
+    if (stopFetchingRequested) {
+      addLog("SCANNER", `Fetching stopped early by user request. Proceeding directly to evaluation with ${liveCandidates.length} retrieved posting(s)...`);
+      stopFetchingRequested = false;
     }
 
     addLog("SCANNER", `[STAGE COMPLETE] Job Scanning Stage completed in ${scanDurationSec}s. Scanned ${totalScannedCount} raw postings; ${liveCandidates.length} matched criteria.`);
@@ -251,9 +289,17 @@ export async function runPipeline(
 
     addLog("NORMALIZER", `Normalized ${latestScanJobs.length} posting(s) from the latest scan.`);
 
-    let existingJobs = latestScanJobs;
+    // Merge latest scan jobs with previously stored jobs that were not returned in the current scan
+    const latestScanIds = new Set(latestScanJobs.map((j) => j.id));
+    const latestScanUrls = new Set(latestScanJobs.map((j) => j.url));
 
-    const jobsNeedingEval = existingJobs.filter((j) => j.status === "new" || j.score === undefined);
+    const preservedPreviousJobs = previousJobsDB.filter(
+      (j) => !latestScanIds.has(j.id) && !latestScanUrls.has(j.url)
+    );
+
+    const fullJobInventory = [...latestScanJobs, ...preservedPreviousJobs];
+
+    const jobsNeedingEval = latestScanJobs.filter((j) => j.status === "new" || j.score === undefined);
     let evaluatedJobsCount = 0;
     let evalDurationSec = "0.0";
 
@@ -287,7 +333,7 @@ export async function runPipeline(
             job.status = "evaluated";
             evaluatedJobsCount++;
 
-            addLog("GEMINI_AI", `[EVAL DONE] "${job.title}" @ ${job.company} -> Score: ${job.score}/100 [${job.match_level}]`);
+            addLog("GEMINI_AI", `[EVAL DONE] (${evaluatedJobsCount}/${totalToEval}) "${job.title}" @ ${job.company} -> Score: ${job.score}/100 [${job.match_level}]`);
           }
         }
       }
@@ -308,24 +354,24 @@ export async function runPipeline(
       return { success: false, cancelled: true, summary: "Scan cancelled by user. No results were saved.", logs };
     }
 
-    saveJobsDB(existingJobs);
+    saveJobsDB(fullJobInventory);
 
     addLog("REPORT", "Generating Markdown report output/report.md...");
-    const reportMd = generateMarkdownReport(existingJobs);
+    const reportMd = generateMarkdownReport(fullJobInventory, undefined, true);
 
     const totalDurationSec = ((Date.now() - pipelineStartTime) / 1000).toFixed(1);
-    addLog("SUCCESS", `[PIPELINE COMPLETE] Full pipeline finished in ${totalDurationSec}s total (Scan Stage: ${scanDurationSec}s | Eval Stage: ${evalDurationSec}s). Database and output/report.md updated.`);
+    addLog("SUCCESS", `[PIPELINE COMPLETE] Full pipeline finished in ${totalDurationSec}s total (Scan Stage: ${scanDurationSec}s | Eval Stage: ${evalDurationSec}s). Database updated with ${fullJobInventory.length} total job(s).`);
 
-    const summaryText = existingJobs.length > 0
-      ? `Scan complete. Scanned ${totalScannedCount} raw job posting(s) across target roles. Found ${existingJobs.length} posting(s) matching your location and company criteria.`
-      : `Scan complete. Scanned ${totalScannedCount} raw job posting(s), but none matched criteria in selected window.`;
+    const summaryText = latestScanJobs.length > 0
+      ? `Scan complete. Found ${latestScanJobs.length} posting(s) in this scan. Total job inventory updated to ${fullJobInventory.length} posting(s).`
+      : `Scan complete. Scanned ${totalScannedCount} raw job posting(s), but no new ones matched criteria. Total job inventory is ${fullJobInventory.length}.`;
 
     isPipelineRunning = false;
     currentPipelineResult = {
       success: true,
-      newJobsCount: existingJobs.length,
+      newJobsCount: latestScanJobs.length,
       evaluatedCount: evaluatedJobsCount,
-      totalJobs: existingJobs.length,
+      totalJobs: fullJobInventory.length,
       totalScanned: totalScannedCount,
       summary: summaryText,
     };
@@ -333,9 +379,9 @@ export async function runPipeline(
     return {
       success: true,
       logs,
-      newJobsCount: existingJobs.length,
+      newJobsCount: latestScanJobs.length,
       evaluatedCount: evaluatedJobsCount,
-      totalJobs: existingJobs.length,
+      totalJobs: fullJobInventory.length,
       totalScanned: totalScannedCount,
       summary: summaryText,
       reportPath: "output/report.md",

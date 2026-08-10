@@ -58,7 +58,9 @@ export async function fetchLiveLinkedInJobs(
   preferredLocations: string[],
   timeFilter: string,
   minSalary?: number,
+  ignoredCompanies: string[] = [],
   isCancelled?: () => boolean,
+  isStopFetching?: () => boolean,
   addLog?: (stage: "SCANNER" | "CONFIG" | "RESUME" | "NORMALIZER" | "GEMINI_AI" | "REPORT" | "SUCCESS" | "ERROR", message: string, details?: string) => void
 ): Promise<{ jobs: Omit<Job, 'id'>[]; totalScanned: number }> {
   const tprMap: Record<string, string> = { past_24h: "r86400", past_week: "r604800", past_month: "r2592000" };
@@ -74,7 +76,13 @@ export async function fetchLiveLinkedInJobs(
     return l === "hybrid" || l === "remote/hybrid" || l === "remote / hybrid" || l === "hybrid remote";
   };
   const targetLocations = preferredLocations.filter((loc) => !isIgnoredLocation(loc));
-  const locationLoop = targetLocations.length > 0 ? targetLocations : [""];
+  
+  // When target company filtering is active (searching specific companies), search nationwide ("United States")
+  // and extract location from matched jobs, filtering locally against preferredLocations.
+  // When in Open Web Search mode (no target companies), search each target location directly.
+  const locationLoop = targetCompanies.length > 0
+    ? ["United States"]
+    : (targetLocations.length > 0 ? targetLocations : [""]);
 
   const sb2Level = minSalary && minSalary >= 40000
     ? Math.min(9, Math.max(1, Math.floor((minSalary - 40000) / 20000) + 1))
@@ -87,18 +95,24 @@ export async function fetchLiveLinkedInJobs(
     const salaryDesc = sb2Level ? ` [Min Salary Filter: $${minSalary?.toLocaleString()}+ (f_SB2=${sb2Level})]` : "";
     const ignoredLocs = preferredLocations.filter((loc) => isIgnoredLocation(loc));
     const ignoredDesc = ignoredLocs.length > 0 ? ` (Ignoring Work Modalities for area search: [${ignoredLocs.join(", ")}])` : "";
+    const locSummary = targetCompanies.length > 0
+      ? `Nationwide ("United States", filtering results locally for preferred locations: [${preferredLocations.join(", ")}])`
+      : `${locationLoop.length} location(s): [${locationLoop.join(", ")}]${ignoredDesc}`;
     addLog(
       "SCANNER",
-      `Starting job search across ${locationLoop.length} location(s): [${locationLoop.join(", ")}]${ignoredDesc} for ${companyLoop.length > 1 ? `${companyLoop.length} target companies` : targetCompanies.length === 1 ? `company "${targetCompanies[0]}"` : "Open Web Search mode"} across role(s): [${targetRoleList.join(", ")}]${salaryDesc}.`
+      `Starting job search across ${locSummary} for ${companyLoop.length > 1 ? `${companyLoop.length} target companies` : targetCompanies.length === 1 ? `company "${targetCompanies[0]}"` : "Open Web Search mode"} across role(s): [${targetRoleList.join(", ")}]${salaryDesc}.`
     );
   }
 
   for (const companyName of companyLoop) {
     if (isCancelled && isCancelled()) break;
+    if (isStopFetching && isStopFetching()) break;
     for (const locName of locationLoop) {
       if (isCancelled && isCancelled()) break;
+      if (isStopFetching && isStopFetching()) break;
       for (const role of targetRoleList) {
         if (isCancelled && isCancelled()) break;
+        if (isStopFetching && isStopFetching()) break;
 
         const labelParts = [];
         if (companyName) labelParts.push(companyName);
@@ -108,6 +122,7 @@ export async function fetchLiveLinkedInJobs(
 
         for (let startPage = 0; startPage <= 975; startPage += 25) {
           if (isCancelled && isCancelled()) break;
+          if (isStopFetching && isStopFetching()) break;
           try {
             const query = companyName
               ? encodeURIComponent(`"${companyName}" ${role}`)
@@ -119,6 +134,8 @@ export async function fetchLiveLinkedInJobs(
             if (startPage > 0 || totalScanned > 0) {
               await new Promise((r) => setTimeout(r, 3000));
             }
+            if (isCancelled && isCancelled()) break;
+            if (isStopFetching && isStopFetching()) break;
 
             const res = await fetchLinkedInWithRetry(url, taskLabel, startPage, addLog);
 
@@ -148,30 +165,6 @@ export async function fetchLiveLinkedInJobs(
             const locationRegex = /job-search-card__location">[\s\S]*?([^\s<][^<]*)/;
             const timeRegex = /datetime="([^"]+)"/;
 
-            if (addLog) {
-              const cardLinks: string[] = [];
-              for (const cm of cardMatches) {
-                const uM = cm[0].match(urnRegex);
-                const tM = cm[0].match(titleRegex);
-                const cM = cm[0].match(companyRegex);
-                if (uM && tM) {
-                  const jId = uM[1];
-                  const jTitle = tM[1].trim();
-                  const jComp = cM ? cM[1].replace(/<[^>]*>/g, "").trim() : (companyName || "Company");
-                  cardLinks.push(`• ${jTitle} (${jComp}): https://www.linkedin.com/jobs/view/${jId}/`);
-                }
-              }
-              const logDetails = [
-                `LinkedIn Web Search Page: ${webSearchUrl}`,
-                `LinkedIn API Endpoint: ${url}`,
-                cardLinks.length > 0
-                  ? `\nDiscovered ${cardLinks.length} raw job postings on this page:\n${cardLinks.slice(0, 10).join("\n")}${cardLinks.length > 10 ? `\n...and ${cardLinks.length - 10} more` : ""}`
-                  : ""
-              ].filter(Boolean).join("\n");
-
-              addLog("SCANNER", `Scanned search page (start=${startPage}) for "${taskLabel}"... Found ${cardMatches.length} raw listings.`, logDetails);
-            }
-
             const validCards: Array<{
               jobId: string;
               jobTitle: string;
@@ -198,6 +191,17 @@ export async function fetchLiveLinkedInJobs(
                 const postedTime = timeM ? timeM[1] : "Recently";
                 const viewUrl = `https://www.linkedin.com/jobs/view/${jobId}/`;
 
+                if (ignoredCompanies && ignoredCompanies.length > 0) {
+                  const compLower = rawComp.toLowerCase();
+                  const isIgnored = ignoredCompanies.some((ic) => {
+                    const icLower = ic.trim().toLowerCase();
+                    return icLower.length > 0 && (compLower.includes(icLower) || icLower.includes(compLower));
+                  });
+                  if (isIgnored) {
+                    continue;
+                  }
+                }
+
                 if (targetCompanies.length > 0) {
                   const compLower = rawComp.toLowerCase();
                   const isMatch = targetCompanies.some((tc) => {
@@ -219,6 +223,20 @@ export async function fetchLiveLinkedInJobs(
                   validCards.push({ jobId, jobTitle, rawComp, jobLoc, postedTime, viewUrl });
                 }
               }
+            }
+
+            if (addLog) {
+              const cardLinks = validCards.map((c) => `• ${c.jobTitle} (${c.rawComp}): ${c.viewUrl}`);
+              const compFilterInfo = targetCompanies.length > 0 ? ` (${validCards.length} matched company "${targetCompanies.join(", ")}")` : "";
+              const logDetails = [
+                `LinkedIn Web Search Page: ${webSearchUrl}`,
+                `LinkedIn API Endpoint: ${url}`,
+                cardLinks.length > 0
+                  ? `\nMatching job postings on this page (${cardLinks.length}):\n${cardLinks.slice(0, 10).join("\n")}${cardLinks.length > 10 ? `\n...and ${cardLinks.length - 10} more` : ""}`
+                  : `\n0 of ${cardMatches.length} raw cards on this page matched target criteria (${targetCompanies.length > 0 ? `Target Company: ${targetCompanies.join(", ")}` : "No company filter"}).`
+              ].filter(Boolean).join("\n");
+
+              addLog("SCANNER", `Scanned search page (start=${startPage}) for "${taskLabel}"... Found ${cardMatches.length} raw listings${compFilterInfo}.`, logDetails);
             }
 
             const fetchedCardsData: Array<{
@@ -316,6 +334,20 @@ export async function fetchLiveLinkedInJobs(
                   status: "new"
                 });
               }
+            }
+
+            const totalOnPage = cardMatches.length;
+            const matchedOnPage = validCards.length;
+            const unmatchedOnPage = totalOnPage - matchedOnPage;
+
+            if (targetCompanies.length > 0 && totalOnPage > 0 && unmatchedOnPage >= totalOnPage - 1) {
+              if (addLog) {
+                addLog(
+                  "SCANNER",
+                  `Completed pagination for "${taskLabel}" (page start=${startPage}): ${unmatchedOnPage} of ${totalOnPage} raw listings did not match target company criteria (unmatched >= ${totalOnPage - 1}). Stopping further pagination for this query.`
+                );
+              }
+              break;
             }
           } catch (err) {
             console.error(`Error fetching live LinkedIn jobs for ${taskLabel} page ${startPage}:`, err);
