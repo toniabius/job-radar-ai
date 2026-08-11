@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Header } from './components/Header';
+import { Header, ActiveTabType } from './components/Header';
 import { JobCard } from './components/JobCard';
 import { JobDetailModal } from './components/JobDetailModal';
 import { DatabaseViewer } from './components/DatabaseViewer';
@@ -9,13 +9,14 @@ import { AddJobModal } from './components/AddJobModal';
 import { ScanProgressModal } from './components/ScanProgressModal';
 import { ScanLogsView } from './components/ScanLogsView';
 import { CandidateProfileEditor } from './components/CandidateProfileEditor';
+import { MetricsTracker } from './components/MetricsTracker';
 import { Job, AppConfig, ResumeData, UserProfile, PipelineLog, CandidateProfile } from './types';
 import { Search, Sparkles, Filter, ArrowUpDown, Building, DollarSign, MapPin, X, Clock, User, Trash2, CheckCircle2 } from 'lucide-react';
 import { parseLocationGroup, parseMinSalary } from './utils/location';
 import { playCompletionChime } from './utils/audio';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'database' | 'config' | 'report' | 'logs' | 'candidate-profile'>('dashboard');
+  const [activeTab, setActiveTab] = useState<ActiveTabType>('dashboard');
   
   // App state
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -1135,6 +1136,17 @@ export default function App() {
             onCreateProfile={handleCreateProfile}
             onDeleteProfile={handleDeleteProfile}
             onSaveCandidateProfile={handleSaveCandidateProfile}
+          />
+        )}
+
+        {/* VELOCITY METRICS TRACKER VIEW */}
+        {activeTab === 'metrics' && (
+          <MetricsTracker
+            jobs={jobs}
+            minimumScoreThreshold={minScoreThreshold}
+            onUpdateJobStatus={(updatedJob) => {
+              handleToggleApplied(updatedJob, !!updatedJob.applied, updatedJob.applied_date);
+            }}
           />
         )}
 

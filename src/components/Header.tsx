@@ -2,9 +2,11 @@ import React from 'react';
 import { Radar, Play, FileText, Database, Settings, User, Sparkles, Activity, History, Terminal, UserCheck } from 'lucide-react';
 import { UserProfile } from '../types';
 
+export type ActiveTabType = 'dashboard' | 'database' | 'report' | 'logs' | 'config' | 'candidate-profile' | 'metrics';
+
 interface HeaderProps {
-  activeTab: 'dashboard' | 'database' | 'config' | 'report' | 'logs' | 'candidate-profile';
-  setActiveTab: (tab: 'dashboard' | 'database' | 'config' | 'report' | 'logs' | 'candidate-profile') => void;
+  activeTab: ActiveTabType;
+  setActiveTab: (tab: ActiveTabType) => void;
   onRunPipeline: () => void;
   isRunningPipeline: boolean;
   totalJobs: number;
@@ -105,11 +107,12 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Navigation Tabs */}
         <nav className="-mb-px flex space-x-1 sm:space-x-2 overflow-x-auto no-scrollbar py-1">
+          {/* 1. Job Dashboard */}
           <button
             onClick={() => setActiveTab('dashboard')}
             className={`inline-flex items-center px-3 py-2 border-b-2 text-xs font-medium whitespace-nowrap transition-colors ${
               activeTab === 'dashboard'
-                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-md'
+                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-md font-bold'
                 : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
             }`}
           >
@@ -117,35 +120,12 @@ export const Header: React.FC<HeaderProps> = ({
             Job Dashboard
           </button>
 
-          <button
-            onClick={() => setActiveTab('config')}
-            className={`inline-flex items-center px-3 py-2 border-b-2 text-xs font-medium whitespace-nowrap transition-colors ${
-              activeTab === 'config'
-                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-md font-bold'
-                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
-            }`}
-          >
-            <Settings className="w-4 h-4 mr-1.5" />
-            Config & Profiles
-          </button>
-
-          <button
-            onClick={() => setActiveTab('candidate-profile')}
-            className={`inline-flex items-center px-3 py-2 border-b-2 text-xs font-medium whitespace-nowrap transition-colors ${
-              activeTab === 'candidate-profile'
-                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-md font-bold'
-                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
-            }`}
-          >
-            <UserCheck className="w-4 h-4 mr-1.5 text-emerald-600" />
-            Apply Assistant & QA
-          </button>
-
+          {/* 2. Full Job Inventory */}
           <button
             onClick={() => setActiveTab('database')}
             className={`inline-flex items-center px-3 py-2 border-b-2 text-xs font-medium whitespace-nowrap transition-colors ${
               activeTab === 'database'
-                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-md'
+                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-md font-bold'
                 : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
             }`}
           >
@@ -153,6 +133,7 @@ export const Header: React.FC<HeaderProps> = ({
             Full Job Inventory
           </button>
 
+          {/* 3. Scan History */}
           <button
             onClick={() => setActiveTab('report')}
             className={`inline-flex items-center px-3 py-2 border-b-2 text-xs font-medium whitespace-nowrap transition-colors ${
@@ -165,6 +146,7 @@ export const Header: React.FC<HeaderProps> = ({
             Scan History
           </button>
 
+          {/* 4. Scan Log */}
           <button
             onClick={() => setActiveTab('logs')}
             className={`inline-flex items-center px-3 py-2 border-b-2 text-xs font-medium whitespace-nowrap transition-colors ${
@@ -174,7 +156,46 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             <Terminal className="w-4 h-4 mr-1.5" />
-            Scan Logs
+            Scan Log
+          </button>
+
+          {/* 5. Config and Profiles */}
+          <button
+            onClick={() => setActiveTab('config')}
+            className={`inline-flex items-center px-3 py-2 border-b-2 text-xs font-medium whitespace-nowrap transition-colors ${
+              activeTab === 'config'
+                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-md font-bold'
+                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
+            }`}
+          >
+            <Settings className="w-4 h-4 mr-1.5" />
+            Config and Profiles
+          </button>
+
+          {/* 6. Apply Assistant */}
+          <button
+            onClick={() => setActiveTab('candidate-profile')}
+            className={`inline-flex items-center px-3 py-2 border-b-2 text-xs font-medium whitespace-nowrap transition-colors ${
+              activeTab === 'candidate-profile'
+                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-md font-bold'
+                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
+            }`}
+          >
+            <UserCheck className="w-4 h-4 mr-1.5 text-emerald-600" />
+            Apply Assistant
+          </button>
+
+          {/* 7. Metrics (Velocity) */}
+          <button
+            onClick={() => setActiveTab('metrics')}
+            className={`inline-flex items-center px-3 py-2 border-b-2 text-xs font-medium whitespace-nowrap transition-colors ${
+              activeTab === 'metrics'
+                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-md font-bold'
+                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
+            }`}
+          >
+            <Activity className="w-4 h-4 mr-1.5 text-indigo-600" />
+            Metrics (Velocity)
           </button>
         </nav>
       </div>

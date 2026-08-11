@@ -40,6 +40,7 @@ export function getDefaultCandidateProfile(): CandidateProfile {
     relocation: "Hybrid / Flexible",
     gender: "Decline to Self-Identify",
     veteranStatus: "I am not a protected veteran",
+    ethnicity: "Decline to Self-Identify",
     disabilityStatus: "No, I do not have a disability",
     knowledgeBase: [],
     customFields: [],

@@ -2,29 +2,52 @@
 
 An automated AI-powered job discovery and candidate fit evaluation pipeline tailored specifically for **Software Engineering (SWE)** and **technical roles**, built with **React**, **Express**, **TypeScript**, and the **Gemini AI API**.
 
-Job Radar AI systematically scans job boards and ATS platforms for target software engineering and technical roles (e.g. Frontend, Backend, Full Stack, AI/ML, DevOps, Systems), compares candidate resumes against job requirements, and calculates match scores, fit summaries, missing technical skills, and recommended application actions.
+Job Radar AI systematically scans job boards and ATS platforms for target software engineering and technical roles (e.g. Frontend, Backend, Full Stack, AI/ML, DevOps, Systems), compares candidate resumes against job requirements, and calculates match scores, fit summaries, missing technical skills, recommended application actions, application velocity metrics, and AI-powered application answers.
 
 ---
 
-## 🌟 Key Features
+## 🌟 Key Features & Workflow Modules
 
-- **Tailored for Software Engineering & Tech Roles**: Evaluates candidate fit against technical hiring bars (tech stacks, architecture, scale, system design, and SWE experience levels).
-- **Candidate Profiles & Profile-Scoped Isolation**: Easily save, switch, create, and delete multiple candidate profiles (e.g. for yourself, colleagues, or friends). Switching profiles automatically isolates and switches the candidate's target config, resume, full job inventory (`database/profiles/<profileId>/jobs.db.json`), and scan history reports (`output/profiles/<profileId>/report.md`).
-- **Interactive Candidate Skill Management**: Easily add custom technical skills via text input, click quick preset buttons (Python, TypeScript, React, Kubernetes, Docker, AWS, GraphQL, System Design, Go, etc.), remove skills, or trigger AI skill re-extraction. Detected skills directly act as scoring factors in both Gemini AI & ATS Heuristic match evaluation.
-- **Unified Config & Profiles Tab**: Merged the Resume and Config tabs into a streamlined **Config & Profiles** view with quick profile switching, candidate profile selection, modal-based profile management, new profile creation, and profile deletion with safety safeguards.
-- **Instant Scan Cancellation**: Click the **Cancel Scan** button at any point during live scanning or AI evaluation to immediately stop the pipeline and abort backend tasks without storing unverified/partial results to your dashboard.
-- **Minimum Score Threshold for Listing Links**: Configure a match score threshold (e.g. `65%`). Scanned reports only include direct job posting links (`🔗 View Job Posting`) for listings meeting or exceeding this match threshold, keeping reports clean and focused on high-fit roles.
-- **PDF Resume Upload & AI Parsing**: Upload PDF resumes directly. Gemini AI automatically extracts contact details, experience, skills, and projects into structured Markdown (`resume.md`).
-- **Flexible Role-Based Search**: Define target software engineering role titles (e.g., *Software Engineer*, *Senior Full Stack Engineer*, *Distributed Systems Engineer*, *AI Platform Engineer*).
-- **Optional Target Companies**: Filter by specific companies and ATS providers (Greenhouse, Lever, Workday, LinkedIn, etc.) or run in **Open Web Search Mode** across all platforms.
-- **Publication Lookback Window**: Configure flexible job publication lookback windows (e.g., *24 Hours*, *3 Days*, *2 Weeks*, *1 Month*) using customizable numbers and time units.
-- **AI-Powered Salary & Compensation Extraction Engine**: Automatically extracts explicitly disclosed base salary ranges or hourly pay rates from job postings using Gemini AI and context-aware regex parsing. Standardizes compensation formats into clean ranges (e.g. `$175,000 - $280,000` or `$80 - $120 / hr`) and marks unlisted compensation as `$Not found` without inserting false guesses.
-- **Salary & Location Filtering**: Filter job opportunities by location preferences (e.g., California, Washington, Remote, Hybrid) and minimum salary targets. Disclosed maximum salaries below the candidate's minimum target automatically cap the evaluation score at 55 (**Weak Match**).
-- **Experience (YOE) Range & Ceiling Guardrails**: Parses both minimum required experience and upper-bound ceilings (e.g., "2-4 years"). Automatically flags experience gaps or over-qualification exceeding role upper bounds as **Weak Match** (max score 55).
-- **Hard Blockers & Criteria to Avoid**: Configure strict dealbreaker filters (e.g., Security Clearance, Contractor/1099 roles, Recruiting/Staffing agencies, non-SWE specialized roles like Data Architect or Test Engineer, 5-day On-site) to penalize and eliminate non-matching positions.
-- **Database Viewer & Multi-Column Sorting**: Dedicated full job inventory view offering live search, multi-column sorting by **Match Score** (High to Low / Low to High), **First Seen Date**, **Job Title**, or **Company Name**, applied status filtering, single-click **AI Evaluate** for pending jobs, and **Evaluate All Pending** batch evaluation.
-- **Scan Progress Console & Reports**: Terminal modal interface displaying live job discovery steps, resume parsing status, and Gemini evaluation outputs. Formatted report view supports styled external application links.
-- **Saved Jobs & Status Tracking**: Bookmark favorites, filter qualified matches (Score ≥ 60%), mark application status (Applied / Interviewing / Offer / Saved), and export reports.
+1. **Job Dashboard**:
+   - Primary operational hub featuring instant pipeline scanning with a live progress console and cancellation controls.
+   - Live search, filtering by match tier (All Qualified, Strong Match ≥65%, Good Match), status filtering (Saved, Applied), and interactive job cards detailing score breakdowns, salary ranges, missing skills, and application guidance.
+
+2. **Full Job Inventory**:
+   - Comprehensive database view listing all discovered job opportunities.
+   - Multi-column sorting (Match Score, Discovery Date, Title, Company Name), provider filtering, single-job **AI Evaluate**, and **Evaluate All Pending** batch processing.
+
+3. **Scan History & Scan Log**:
+   - **Scan History**: Renders formatted Markdown reports for active and past scan runs with score threshold gating (`minimum_score`, e.g., 65%) to filter listing links.
+   - **Scan Log**: Real-time terminal log viewer providing deep diagnostic visibility into ATS adapters, page fetching, and Gemini API requests.
+
+4. **Config and Profiles**:
+   - Streamlined candidate profile switcher (create, switch, and delete candidate profiles with safety safeguards).
+   - Profile-scoped isolation: Switching profiles instantly syncs target configs, resumes, job databases (`database/profiles/<profileId>/jobs.db.json`), and scan reports (`output/profiles/<profileId>/reports/`).
+   - PDF Resume parser & interactive **Detected Skills Manager** with quick preset buttons and text inputs.
+   - Pipeline parameters: Target roles, target companies, publication lookback window (e.g. 24h, 7d, 1m), minimum match score threshold, salary floor, preferred locations, experience ceiling rules, and hard dealbreaker blockers.
+
+5. **Apply Assistant**:
+   - **Personal Contact Details**: Store candidate contact information (Name, Email, Phone, Address, LinkedIn, Portfolio, GitHub) for quick copy-pasting into job application forms.
+   - **Application Q&A Knowledge Base**: Pre-populate common job application questions and responses.
+   - **AI Application Answer Generator**:
+     - Freetext input for any **Job Listing Website URL**. The Express backend automatically fetches and parses the live web page HTML/text from the URL to extract the job description context.
+     - Optional **Word / Character Limit** constraints (e.g. "150 words" or "500 characters").
+     - Generates first-person, authentic application answers using Gemini AI based on candidate resume, profile details, and job requirements.
+   - **Instruction & Chrome Extension Helper**: Instructions and setup guide for the included **Job Radar QuickFill** Chrome Extension (`/public/extension`).
+
+6. **Metrics (Velocity) Tracker**:
+   - **Daily Application Velocity**: Track job applications submitted today against a customizable daily target goal (e.g. 5 apps/day) with progress indicators.
+   - **Momentum Streak & 7-Day Velocity**: Measure consecutive active application days and 7-day average submission rates.
+   - **Application Pipeline Funnel**: Visual conversion analytics (Discovered ➔ AI Evaluated ➔ Strong Matches ➔ Submitted Applications).
+   - **Daily Velocity History Chart**: Interactive visual bar chart displaying application volume across 7D, 14D, and 30D timeframes.
+   - **Application Velocity Job Log**: Direct log with quick status filters (All Applied, Applied Today, Strong Matches) and 1-click status toggling.
+
+7. **Chrome Extension (Job Radar QuickFill)**:
+   - Floating in-page helper for ATS platforms (LinkedIn Easy Apply, Workday, Greenhouse, Lever).
+   - Includes an **"Override existing form values"** checkbox:
+     - *Unchecked (Default)*: Preserves existing filled form inputs.
+     - *Checked*: Overwrites form inputs with candidate profile and Q&A values.
+   - Robust timeout and context invalidation protection against stuck UI states.
 
 ---
 
@@ -33,7 +56,7 @@ Job Radar AI systematically scans job boards and ATS platforms for target softwa
 ### Prerequisites
 - **Node.js**: v18.0.0 or higher
 - **npm**: v9.0.0 or higher
-- **Gemini API Key** *(Optional, required for live AI match evaluation)*: Obtain a free key from [Google AI Studio](https://aistudio.google.com/).
+- **Gemini API Key** *(Optional, required for live AI match evaluation and answer generation)*: Obtain a free key from [Google AI Studio](https://aistudio.google.com/).
 
 ### 1. Clone the Repository & Install Dependencies
 ```bash
@@ -75,30 +98,40 @@ npm start
 
 ```
 .
-├── server.ts                   # Full-stack Express backend server & Gemini API pipeline
+├── server.ts                   # Full-stack Express backend server, API routes & Gemini pipeline
+├── server/                     # Modular server handlers
+│   └── gemini.ts               # Gemini AI evaluation client, fallback models & prompt templates
 ├── src/
-│   ├── App.tsx                 # Primary dashboard controller, cancel handlers & filter views
+│   ├── App.tsx                 # Primary application controller & tab router
 │   ├── components/             # React UI components
-│   │   ├── Header.tsx          # Navigation, tab switching & scan launcher
-│   │   ├── ScanProgressModal.tsx # Live terminal log modal with Cancel Scan control
-│   │   ├── ConfigEditor.tsx    # Role, company, threshold & lookback config panel
+│   │   ├── Header.tsx          # Main top navigation bar (7 core tabs)
+│   │   ├── JobCard.tsx         # Detailed job card item & evaluation modal
+│   │   ├── DatabaseViewer.tsx  # Full Job Inventory database inspector & batch evaluator
+│   │   ├── ConfigEditor.tsx    # Role, threshold, lookback, salary & profile manager
+│   │   ├── CandidateProfileEditor.tsx # Apply Assistant (Contact details, Q&A, AI Answer Generator, Instruction)
+│   │   ├── MetricsTracker.tsx  # Application Velocity Tracker, daily goal, streak & conversion funnel
 │   │   ├── ReportView.tsx      # Formatted Markdown report viewer with threshold link gating
-│   │   ├── DatabaseViewer.tsx  # Direct database manager with search & batch evaluation
-│   │   ├── JobCard.tsx         # Detailed job item & AI evaluation breakdown
-│   │   └── ...
-│   ├── data/                   # Default seed data and fallback initial configurations
+│   │   ├── ScanProgressModal.tsx # Terminal console modal with Cancel Scan control
+│   │   └── ScanLogsView.tsx    # Real-time scan log terminal output viewer
+│   ├── data/                   # Initial seed data & default configuration profiles
 │   ├── types.ts                # Global TypeScript interfaces & types
 │   └── main.tsx                # React Vite client entry point
+├── public/
+│   └── extension/              # Chrome Extension (Job Radar QuickFill)
+│       ├── manifest.json       # Manifest V3 configuration
+│       ├── content.js          # In-page floating panel & form autofill engine
+│       └── background.js       # Background service worker API bridge
 ├── database/                   # Persistent database directory (.gitkeep tracked)
 │   ├── profiles/               # Profile-scoped job databases (database/profiles/<profileId>/jobs.db.json)
 │   └── jobs.db.json            # Active profile synced database
 ├── config/                     # User settings and profiles store directory
-│   └── profiles.json           # Profiles store containing configurations & resumes
+│   ├── profiles.json           # Profiles store containing configurations, resumes & contact info
+│   └── config.json             # Active profile configuration
 ├── output/                     # Generated reports directory (.gitkeep tracked)
-│   ├── profiles/               # Profile-scoped scan history reports (output/profiles/<profileId>/reports/)
-│   └── report.md               # Active profile synced markdown report
+│   ├── profiles/               # Profile-scoped scan history reports
+│   └── report.md               # Active profile synced report
 ├── resume/                     # Candidate resume store directory (.gitkeep tracked)
-│   └── .gitkeep
+│   └── resume.md               # Active profile resume
 └── package.json
 ```
 
@@ -110,7 +143,6 @@ To preserve folder structures in Git without committing local runtime data, the 
 
 ```gitignore
 # Local User Data, Databases & Generated Reports
-# Retain directory structure with .gitkeep while ignoring user data & generated outputs
 config/*
 !config/.gitkeep
 
@@ -128,18 +160,22 @@ resume/*
 
 ## 💡 How To Use
 
-1. **Upload / View Resume & Manage Candidate Skills**: Verify or edit your candidate resume in the **Candidate Resume** section, upload a PDF resume for AI parsing, or manage **Detected Skills** using custom inputs, quick presets, and skill deletion. (These skills directly factor into AI and ATS match scoring).
-2. **Configure Pipeline Settings**:
-   - Add your target **Roles** (e.g., *Full Stack Engineer*, *AI Platform Engineer*).
-   - Add **Target Companies** (or leave empty to scan broadly across open web ATS adapters).
-   - Set **Minimum Match Score Threshold** for report listing links (e.g., `65%`).
-   - Set **Job Publication Lookback Window** (e.g. `24 Hours`, `7 Days`, `1 Month`).
-   - Customize **Preferred Locations** and **Salary Range**.
-3. **Execute or Cancel Pipeline**: Click **"Scan"** in top navigation to launch scanning. If started by mistake, click **"Cancel Scan"** to halt processing immediately.
-4. **Review Matched Jobs & Reports**: Inspect match scores, missing skill gaps, and direct listing links in the **Scan History** tab.
+1. **Configure Profiles & Resume**:
+   - Go to **Config and Profiles** to edit candidate settings, upload or parse PDF resumes, and customize detected technical skills.
+2. **Launch Job Discovery Scan**:
+   - Click **"Scan"** in the header to execute automated job discovery and AI match evaluation.
+3. **Review & Evaluate Jobs**:
+   - Browse high-match opportunities on the **Job Dashboard** or inspect all discovered postings in **Full Job Inventory**.
+4. **Draft Application Answers with AI**:
+   - Open **Apply Assistant**, paste any job listing URL, specify an optional length limit (e.g. 150 words), and enter application questions to generate custom, first-person responses.
+5. **Autofill Job Applications**:
+   - Use the **Job Radar QuickFill** Chrome Extension on job portals (LinkedIn, Workday, Greenhouse, Lever). Use the **"Override existing form values"** checkbox if you wish to replace pre-filled form fields.
+6. **Track Application Velocity**:
+   - Visit **Metrics (Velocity)** to monitor daily submission targets, active momentum streaks, 14-day velocity charts, and candidate funnel conversion rates.
 
 ---
 
 ## 📄 License
 
 Personal, non-commercial use only. See [LICENSE](./LICENSE) for details.
+

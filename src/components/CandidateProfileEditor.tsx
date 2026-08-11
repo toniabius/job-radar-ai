@@ -84,7 +84,8 @@ export const CandidateProfileEditor: React.FC<CandidateProfileEditorProps> = ({
 
   // AI Answer Generator State
   const [aiQuestion, setAiQuestion] = useState<string>('');
-  const [selectedJobId, setSelectedJobId] = useState<string>('');
+  const [aiJobUrl, setAiJobUrl] = useState<string>('');
+  const [aiWordLimit, setAiWordLimit] = useState<string>('');
   const [isGeneratingAnswer, setIsGeneratingAnswer] = useState<boolean>(false);
   const [generatedAnswer, setGeneratedAnswer] = useState<string>('');
   const [generatorError, setGeneratorError] = useState<string | null>(null);
@@ -354,18 +355,13 @@ export const CandidateProfileEditor: React.FC<CandidateProfileEditorProps> = ({
     setGeneratedAnswer('');
 
     try {
-      const matchedJob = jobs.find((j) => j.id === selectedJobId);
-      const jobContext = matchedJob
-        ? `Company: ${matchedJob.company}\nRole: ${matchedJob.title}\nLocation: ${matchedJob.location}\nDescription: ${matchedJob.description}`
-        : '';
-
       const res = await fetch('/api/candidate-profile/generate-answer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          question: aiQuestion,
-          jobId: selectedJobId || undefined,
-          jobContext: jobContext || undefined,
+          question: aiQuestion.trim(),
+          jobUrl: aiJobUrl.trim() || undefined,
+          wordLimit: aiWordLimit.trim() || undefined,
         }),
       });
 
@@ -578,7 +574,7 @@ export const CandidateProfileEditor: React.FC<CandidateProfileEditorProps> = ({
             }`}
           >
             <Terminal className="w-3.5 h-3.5 mr-1.5 text-rose-400" />
-            Autofill Helper & Bookmarklet
+            Instruction
           </button>
         </div>
       </div>
@@ -1147,6 +1143,149 @@ export const CandidateProfileEditor: React.FC<CandidateProfileEditorProps> = ({
             </div>
           </div>
 
+          {/* Section 4: Voluntary Disclosures (EEO / Diversity) */}
+          <div>
+            <div className="flex items-center space-x-2 border-b border-slate-100 pb-2 mb-4">
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+              <h3 className="font-bold text-sm text-slate-900">Voluntary Disclosures (EEO / Diversity)</h3>
+              <span className="text-[10px] text-slate-500 font-normal hidden sm:inline">
+                Auto-fills Workday, Greenhouse, Lever, & LinkedIn demographic / EEO questions
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Gender */}
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 flex flex-col justify-between space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Gender</label>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(profile.gender || 'Decline to Self-Identify', 'Gender')}
+                    className="p-1 rounded text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
+                    title="Copy Gender"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <select
+                  value={profile.gender || 'Decline to Self-Identify'}
+                  onChange={(e) => handleProfileChange('gender', e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-medium focus:outline-hidden cursor-pointer"
+                >
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Non-Binary">Non-Binary / Third Gender</option>
+                  <option value="Decline to Self-Identify">Decline to Self-Identify</option>
+                </select>
+                <input
+                  type="text"
+                  value={profile.gender || ''}
+                  onChange={(e) => handleProfileChange('gender', e.target.value)}
+                  placeholder="Or type custom phrase..."
+                  className="w-full bg-white border border-slate-200/80 rounded-lg px-2 py-1 text-[11px] text-slate-700 focus:outline-hidden"
+                />
+              </div>
+
+              {/* Race / Ethnicity */}
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 flex flex-col justify-between space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Race / Ethnicity</label>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(profile.ethnicity || 'Decline to Self-Identify', 'Race / Ethnicity')}
+                    className="p-1 rounded text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
+                    title="Copy Race / Ethnicity"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <select
+                  value={profile.ethnicity || 'Decline to Self-Identify'}
+                  onChange={(e) => handleProfileChange('ethnicity', e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-medium focus:outline-hidden cursor-pointer"
+                >
+                  <option value="Hispanic or Latino">Hispanic or Latino</option>
+                  <option value="White (Not Hispanic or Latino)">White (Not Hispanic or Latino)</option>
+                  <option value="Black or African American (Not Hispanic or Latino)">Black or African American</option>
+                  <option value="Asian (Not Hispanic or Latino)">Asian (Not Hispanic or Latino)</option>
+                  <option value="Native Hawaiian or Other Pacific Islander">Native Hawaiian / Pacific Islander</option>
+                  <option value="American Indian or Alaska Native">American Indian / Alaska Native</option>
+                  <option value="Two or More Races">Two or More Races</option>
+                  <option value="Decline to Self-Identify">Decline to Self-Identify</option>
+                </select>
+                <input
+                  type="text"
+                  value={profile.ethnicity || ''}
+                  onChange={(e) => handleProfileChange('ethnicity', e.target.value)}
+                  placeholder="Or type custom phrase..."
+                  className="w-full bg-white border border-slate-200/80 rounded-lg px-2 py-1 text-[11px] text-slate-700 focus:outline-hidden"
+                />
+              </div>
+
+              {/* Veteran Status */}
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 flex flex-col justify-between space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Veteran Status</label>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(profile.veteranStatus || 'I am not a protected veteran', 'Veteran Status')}
+                    className="p-1 rounded text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
+                    title="Copy Veteran Status"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <select
+                  value={profile.veteranStatus || 'I am not a protected veteran'}
+                  onChange={(e) => handleProfileChange('veteranStatus', e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-medium focus:outline-hidden cursor-pointer"
+                >
+                  <option value="I am not a protected veteran">I am not a protected veteran</option>
+                  <option value="I identify as one or more of the classifications of protected veteran">Protected Veteran</option>
+                  <option value="Decline to Self-Identify">Decline to Self-Identify</option>
+                </select>
+                <input
+                  type="text"
+                  value={profile.veteranStatus || ''}
+                  onChange={(e) => handleProfileChange('veteranStatus', e.target.value)}
+                  placeholder="Or type custom phrase..."
+                  className="w-full bg-white border border-slate-200/80 rounded-lg px-2 py-1 text-[11px] text-slate-700 focus:outline-hidden"
+                />
+              </div>
+
+              {/* Disability Status */}
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 flex flex-col justify-between space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Disability Status</label>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(profile.disabilityStatus || 'No, I do not have a disability', 'Disability Status')}
+                    className="p-1 rounded text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
+                    title="Copy Disability Status"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <select
+                  value={profile.disabilityStatus || 'No, I do not have a disability'}
+                  onChange={(e) => handleProfileChange('disabilityStatus', e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-medium focus:outline-hidden cursor-pointer"
+                >
+                  <option value="No, I do not have a disability">No, I do not have a disability</option>
+                  <option value="Yes, I have a disability">Yes, I have a disability</option>
+                  <option value="Decline to Self-Identify">Decline to Self-Identify</option>
+                </select>
+                <input
+                  type="text"
+                  value={profile.disabilityStatus || ''}
+                  onChange={(e) => handleProfileChange('disabilityStatus', e.target.value)}
+                  placeholder="Or type custom phrase..."
+                  className="w-full bg-white border border-slate-200/80 rounded-lg px-2 py-1 text-[11px] text-slate-700 focus:outline-hidden"
+                />
+              </div>
+            </div>
+          </div>
+
           {/* Section 4: Work Experience */}
           <div>
             <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-4">
@@ -1603,22 +1742,34 @@ export const CandidateProfileEditor: React.FC<CandidateProfileEditorProps> = ({
               />
             </div>
 
-            <div>
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1">
-                Attach Specific Job Context (Optional)
-              </label>
-              <select
-                value={selectedJobId}
-                onChange={(e) => setSelectedJobId(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 font-medium focus:outline-hidden cursor-pointer"
-              >
-                <option value="">-- None (General Response) --</option>
-                {jobs.map((job) => (
-                  <option key={job.id} value={job.id}>
-                    {job.company} — {job.title} ({job.location})
-                  </option>
-                ))}
-              </select>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1">
+                  Job Listing Website URL (Optional)
+                </label>
+                <input
+                  type="url"
+                  placeholder="https://company.workdayjobs.com/job/12345 or https://linkedin.com/jobs/view/..."
+                  value={aiJobUrl}
+                  onChange={(e) => setAiJobUrl(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 font-medium focus:outline-hidden focus:border-emerald-500"
+                />
+                <p className="text-[10px] text-slate-500 mt-1">AI will automatically fetch and read the job description to draft an answer.</p>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1">
+                  Word / Character Limit (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. 150 words, or 500 characters"
+                  value={aiWordLimit}
+                  onChange={(e) => setAiWordLimit(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 font-medium focus:outline-hidden focus:border-emerald-500"
+                />
+                <p className="text-[10px] text-slate-500 mt-1">Specify length constraint to ensure fit within form input limits.</p>
+              </div>
             </div>
 
             <button

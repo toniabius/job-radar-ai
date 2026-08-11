@@ -124,6 +124,7 @@ export interface CandidateProfile {
   relocation: 'Yes' | 'No' | 'Hybrid / Flexible';
   gender?: string;
   veteranStatus?: string;
+  ethnicity?: string;
   disabilityStatus?: string;
   knowledgeBase: KnowledgeEntry[];
   customFields?: CustomContactField[];

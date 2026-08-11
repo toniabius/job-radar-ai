@@ -101,9 +101,13 @@
         </div>
       </div>
       <div id="jr-panel-body" class="jr-body">
-        <p id="jr-modal-hint" style="margin-bottom: 10px; font-size: 11px; color: #cbd5e1;">
+        <p id="jr-modal-hint" style="margin-bottom: 8px; font-size: 11px; color: #cbd5e1;">
           Ready on this page. Open any job application to auto-fill.
         </p>
+        <div id="jr-override-wrapper" style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 11px; color: #e2e8f0; background: rgba(255,255,255,0.06); padding: 6px 10px; border-radius: 6px;">
+          <input type="checkbox" id="jr-cb-override" style="all: unset !important; width: 14px !important; height: 14px !important; min-width: 14px !important; min-height: 14px !important; max-width: 14px !important; max-height: 14px !important; margin: 0 !important; padding: 0 !important; display: inline-block !important; flex-shrink: 0 !important; cursor: pointer !important; accent-color: #10b981 !important; appearance: checkbox !important; -webkit-appearance: checkbox !important;" />
+          <label for="jr-cb-override" style="all: unset !important; cursor: pointer !important; user-select: none !important; font-size: 11px !important; color: #e2e8f0 !important; font-family: system-ui, sans-serif !important;">Override existing form values</label>
+        </div>
         <button id="jr-btn-autofill" class="jr-btn">
           <span>⚡ AutoFill Page & Radios</span>
         </button>
@@ -189,11 +193,29 @@
 
     if (statusEl) statusEl.innerText = 'Scanning inputs & radio questions...';
 
+    const shouldOverride = document.getElementById('jr-cb-override')?.checked || false;
+
     const container = document.querySelector(
       '.jobs-easy-apply-modal, .jobs-easy-apply-content, div[role="dialog"], .jobs-apply-form, [data-test-modal], form, .application-form'
     ) || document.body;
 
     let filledCount = 0;
+
+    const workExps = activeProfile.workExperience || [];
+    let titleCount = 0;
+    let companyCount = 0;
+    let locationCount = 0;
+    let startDateCount = 0;
+    let endDateCount = 0;
+    let descCount = 0;
+
+    // Detect work experience section containers on page if present
+    const expContainers = Array.from(container.querySelectorAll(
+      '[data-automation-id*="workExperience"], [data-automation-id*="experience"], fieldset, .experience-entry, .work-experience-entry, .work-history-item, .jobs-easy-apply-form-section__group, .form-section'
+    )).filter((c) => {
+      const text = c.textContent.toLowerCase();
+      return text.includes('title') || text.includes('company') || text.includes('employer') || text.includes('work') || text.includes('experience');
+    });
 
     // 1. Fill Text Inputs & Textareas & Selects
     const textInputs = container.querySelectorAll(
@@ -202,6 +224,19 @@
 
     textInputs.forEach((input) => {
       if (input.type === 'hidden' || input.type === 'radio' || input.type === 'checkbox') return;
+
+      // Check override setting: skip if element already has a value and override is disabled
+      if (!shouldOverride) {
+        if (input.tagName === 'SELECT') {
+          if (input.selectedIndex > 0 && input.options[input.selectedIndex]?.value) {
+            return;
+          }
+        } else {
+          if (input.value && input.value.trim() !== '') {
+            return;
+          }
+        }
+      }
 
       const labelText = getLabelForInput(input).toLowerCase();
       const inputName = (input.name || input.id || '').toLowerCase();
@@ -252,23 +287,85 @@
         valueToSet = activeProfile.sponsorshipRequired || 'No';
       } else if (combinedKey.includes('authorization') || combinedKey.includes('visa status') || combinedKey.includes('work status')) {
         valueToSet = activeProfile.workAuthorization;
+      } else if (combinedKey.includes('veteran status') || combinedKey.includes('veteran')) {
+        valueToSet = activeProfile.veteranStatus || 'I am not a protected veteran';
+      } else if (combinedKey.includes('gender') || combinedKey.includes('sex')) {
+        valueToSet = activeProfile.gender || 'Decline to Self-Identify';
+      } else if (combinedKey.includes('ethnicity') || combinedKey.includes('race') || combinedKey.includes('hispanic')) {
+        valueToSet = activeProfile.ethnicity || 'Decline to Self-Identify';
+      } else if (combinedKey.includes('disability status') || combinedKey.includes('disability') || combinedKey.includes('handicap')) {
+        valueToSet = activeProfile.disabilityStatus || 'No, I do not have a disability';
       }
 
-      // Work Experience Field Matchers
-      const firstExp = activeProfile.workExperience && activeProfile.workExperience.length > 0 ? activeProfile.workExperience[0] : null;
-      if (!valueToSet && firstExp) {
+      // Work Experience Field Matchers (Supports Multiple Work Experiences)
+      if (!valueToSet && workExps.length > 0) {
+        const isMostRecentOrCurrent = combinedKey.includes('most recent') || combinedKey.includes('current employer') || combinedKey.includes('current title') || combinedKey.includes('present company');
+
+        // Job Title
         if (combinedKey.includes('job title') || combinedKey.includes('most recent title') || (combinedKey.includes('title') && (combinedKey.includes('job') || combinedKey.includes('work') || combinedKey.includes('role')))) {
-          valueToSet = firstExp.title;
-        } else if (combinedKey.includes('company') || combinedKey.includes('employer') || combinedKey.includes('organization')) {
-          valueToSet = firstExp.company;
-        } else if (combinedKey.includes('location') && (combinedKey.includes('work') || combinedKey.includes('job') || combinedKey.includes('company'))) {
-          valueToSet = firstExp.location || activeProfile.city;
-        } else if (combinedKey.includes('from') || combinedKey.includes('start date') || combinedKey.includes('start month')) {
-          valueToSet = firstExp.startMonth && firstExp.startYear ? `${firstExp.startMonth}/${firstExp.startYear}` : firstExp.startYear || '2024';
-        } else if (combinedKey.includes('to') || combinedKey.includes('end date') || combinedKey.includes('end month')) {
-          valueToSet = firstExp.currentlyWorkHere ? 'Present' : (firstExp.endMonth && firstExp.endYear ? `${firstExp.endMonth}/${firstExp.endYear}` : firstExp.endYear || 'Present');
-        } else if ((combinedKey.includes('role description') || combinedKey.includes('responsibilities') || combinedKey.includes('job description') || combinedKey.includes('duties')) && input.tagName === 'TEXTAREA') {
-          valueToSet = firstExp.description;
+          let idx = 0;
+          if (!isMostRecentOrCurrent) {
+            const containerIdx = expContainers.findIndex((c) => c.contains(input));
+            idx = containerIdx !== -1 ? containerIdx : titleCount;
+            titleCount++;
+          }
+          const exp = workExps[idx];
+          if (exp) valueToSet = exp.title;
+        }
+        // Company / Employer
+        else if (combinedKey.includes('company') || combinedKey.includes('employer') || combinedKey.includes('organization')) {
+          let idx = 0;
+          if (!isMostRecentOrCurrent) {
+            const containerIdx = expContainers.findIndex((c) => c.contains(input));
+            idx = containerIdx !== -1 ? containerIdx : companyCount;
+            companyCount++;
+          }
+          const exp = workExps[idx];
+          if (exp) valueToSet = exp.company;
+        }
+        // Location
+        else if (combinedKey.includes('location') && (combinedKey.includes('work') || combinedKey.includes('job') || combinedKey.includes('company') || combinedKey.includes('employer'))) {
+          let idx = 0;
+          if (!isMostRecentOrCurrent) {
+            const containerIdx = expContainers.findIndex((c) => c.contains(input));
+            idx = containerIdx !== -1 ? containerIdx : locationCount;
+            locationCount++;
+          }
+          const exp = workExps[idx];
+          if (exp) valueToSet = exp.location || activeProfile.city;
+        }
+        // Start Date / Month
+        else if (combinedKey.includes('start date') || combinedKey.includes('start month') || combinedKey.includes('from month') || combinedKey.includes('from date') || (combinedKey.includes('from') && (combinedKey.includes('work') || combinedKey.includes('job') || combinedKey.includes('date')))) {
+          let idx = 0;
+          if (!isMostRecentOrCurrent) {
+            const containerIdx = expContainers.findIndex((c) => c.contains(input));
+            idx = containerIdx !== -1 ? containerIdx : startDateCount;
+            startDateCount++;
+          }
+          const exp = workExps[idx];
+          if (exp) valueToSet = exp.startMonth && exp.startYear ? `${exp.startMonth}/${exp.startYear}` : exp.startYear || '2024';
+        }
+        // End Date / Month
+        else if (combinedKey.includes('end date') || combinedKey.includes('end month') || combinedKey.includes('to month') || combinedKey.includes('to date') || (combinedKey.includes('to') && (combinedKey.includes('work') || combinedKey.includes('job') || combinedKey.includes('date')))) {
+          let idx = 0;
+          if (!isMostRecentOrCurrent) {
+            const containerIdx = expContainers.findIndex((c) => c.contains(input));
+            idx = containerIdx !== -1 ? containerIdx : endDateCount;
+            endDateCount++;
+          }
+          const exp = workExps[idx];
+          if (exp) valueToSet = exp.currentlyWorkHere ? 'Present' : (exp.endMonth && exp.endYear ? `${exp.endMonth}/${exp.endYear}` : exp.endYear || 'Present');
+        }
+        // Description / Responsibilities
+        else if ((combinedKey.includes('role description') || combinedKey.includes('responsibilities') || combinedKey.includes('job description') || combinedKey.includes('duties') || combinedKey.includes('summary')) && input.tagName === 'TEXTAREA') {
+          let idx = 0;
+          if (!isMostRecentOrCurrent) {
+            const containerIdx = expContainers.findIndex((c) => c.contains(input));
+            idx = containerIdx !== -1 ? containerIdx : descCount;
+            descCount++;
+          }
+          const exp = workExps[idx];
+          if (exp) valueToSet = exp.description;
         }
       }
 
@@ -311,6 +408,12 @@
     );
 
     radioContainers.forEach((group) => {
+      // If override is disabled, check if group already has a checked option
+      if (!shouldOverride) {
+        const existingChecked = group.querySelector('input[type="radio"]:checked, input[type="checkbox"]:checked, [role="radio"][aria-checked="true"]');
+        if (existingChecked) return;
+      }
+
       const questionText = getQuestionTextForGroup(group).toLowerCase();
       if (!questionText) return;
 
@@ -337,6 +440,15 @@
       // Gender Question
       else if (questionText.includes('gender') || questionText.includes('sex identity')) {
         targetChoice = activeProfile.gender || 'Decline to self-identify';
+      }
+      // Race / Ethnicity Question
+      else if (
+        questionText.includes('ethnicity') ||
+        questionText.includes('race') ||
+        questionText.includes('ethnic background') ||
+        questionText.includes('hispanic or latino')
+      ) {
+        targetChoice = activeProfile.ethnicity || 'Decline to self-identify';
       }
       // Veteran Status Question
       else if (questionText.includes('veteran') || questionText.includes('military status')) {

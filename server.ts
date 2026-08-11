@@ -469,7 +469,7 @@ app.post("/api/candidate-profile", (req, res) => {
 
 app.post("/api/candidate-profile/generate-answer", async (req, res) => {
   try {
-    const { question, jobId, jobContext } = req.body;
+    const { question, jobId, jobContext, jobUrl, wordLimit } = req.body;
     if (!question || !question.trim()) {
       return res.status(400).json({ error: "Application question is required" });
     }
@@ -478,7 +478,32 @@ app.post("/api/candidate-profile/generate-answer", async (req, res) => {
     const resumeData = loadResume();
 
     let contextToUse = jobContext || "";
-    if (!contextToUse && jobId) {
+    if (jobUrl && jobUrl.trim()) {
+      try {
+        const urlRes = await fetch(jobUrl.trim(), {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          },
+          signal: AbortSignal.timeout(6000),
+        });
+        if (urlRes.ok) {
+          const html = await urlRes.text();
+          const cleanText = html
+            .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
+            .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+          contextToUse += `\n\n=== Job Description from ${jobUrl.trim()} ===\n${cleanText.slice(0, 3500)}`;
+        } else {
+          contextToUse += `\nTarget Job Listing URL: ${jobUrl.trim()}`;
+        }
+      } catch (fetchErr: any) {
+        console.warn("[JD FETCH] Failed to fetch job URL:", fetchErr.message);
+        contextToUse += `\nTarget Job Listing URL: ${jobUrl.trim()}`;
+      }
+    } else if (!contextToUse && jobId) {
       const jobs = loadJobsDB();
       const matchedJob = jobs.find((j) => j.id === jobId);
       if (matchedJob) {
@@ -490,7 +515,9 @@ app.post("/api/candidate-profile/generate-answer", async (req, res) => {
       question.trim(),
       contextToUse,
       candidateProfile,
-      resumeData.content
+      resumeData.content,
+      wordLimit,
+      jobUrl
     );
 
     res.json({ success: true, answer: generatedAnswer });

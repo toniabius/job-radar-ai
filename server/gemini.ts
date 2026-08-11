@@ -64,7 +64,9 @@ export async function generateApplicationAnswer(
   question: string,
   jobContext?: string,
   candidateProfile?: any,
-  resumeContent?: string
+  resumeContent?: string,
+  wordLimit?: string | number,
+  jobUrl?: string
 ): Promise<string> {
   const apiKey = getCleanApiKey();
   if (!apiKey || !hasValidApiKey()) {
@@ -72,6 +74,16 @@ export async function generateApplicationAnswer(
   }
 
   const ai = getGeminiClient();
+
+  let extendedContext = jobContext || "";
+  if (jobUrl && jobUrl.trim()) {
+    extendedContext = `Job Listing URL: ${jobUrl.trim()}\n` + extendedContext;
+  }
+
+  const limitInstruction = wordLimit
+    ? `Strict Length Limit: Keep the answer strictly under ${wordLimit}.`
+    : 'Write a concise 1-3 paragraph response.';
+
   const prompt = `You are a professional career coach and job candidate application assistant.
 The candidate is filling out a job application or answering an interview application question.
 
@@ -86,14 +98,15 @@ ${(candidateProfile?.knowledgeBase || []).map((k: any) => `  * Q: ${k.questionPa
 Resume Highlights:
 ${(resumeContent || '').slice(0, 1500)}
 
-${jobContext ? `Target Job Details:\n${jobContext.slice(0, 1000)}` : ''}
+${extendedContext ? `Target Job Context:\n${extendedContext.slice(0, 3000)}` : ''}
 
 Application Question To Answer:
 "${question}"
 
 Instructions:
-Write a concise, compelling, professional, and authentic 1-3 paragraph response for the candidate to submit in their application.
-Be direct, relevant to their actual background, and write in the first-person ("I"). Do not output placeholders or generic meta commentary.`;
+Write an authentic, compelling, professional response for the candidate to submit in their application.
+Be direct, relevant to their actual background, and write in the first-person ("I"). Do not output placeholders, bullet headings, or generic meta commentary.
+${limitInstruction}`;
 
   for (const model of ALL_GEMINI_FALLBACK_MODELS) {
     try {
@@ -152,6 +165,10 @@ Return ONLY a valid JSON object matching this schema without any outer markdown 
   "desiredSalary": "string (e.g. $165,000)",
   "noticePeriod": "string (e.g. 2 weeks)",
   "relocation": "Yes" | "No" | "Hybrid / Flexible",
+  "gender": "string (e.g. Male, Female, Non-Binary, Decline to Self-Identify)",
+  "veteranStatus": "string (e.g. I am not a protected veteran, Protected Veteran, Decline to Self-Identify)",
+  "ethnicity": "string (e.g. Hispanic or Latino, White, Asian, Black or African American, Decline to Self-Identify)",
+  "disabilityStatus": "string (e.g. No, I do not have a disability, Yes, I have a disability, Decline to Self-Identify)",
   "workExperience": [
     {
       "id": "exp-1",
@@ -231,3 +248,4 @@ function extractBasicCandidateProfileRegex(rawText: string): any {
     githubUrl: githubMatch ? githubMatch[0] : current.githubUrl,
   };
 }
+
