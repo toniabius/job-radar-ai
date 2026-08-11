@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Job Radar Assistant</title>
+  <style>
+    body {
+      width: 320px;
+      margin: 0;
+      padding: 16px;
+      font-family: system-ui, -apple-system, sans-serif;
+      background-color: #0f172a;
+      color: #f8fafc;
+      font-size: 13px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #1e293b;
+    }
+    .title {
+      font-weight: 700;
+      font-size: 14px;
+      color: #38bdf8;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .badge {
+      font-size: 10px;
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-weight: 600;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .label {
+      font-size: 10px;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: #94a3b8;
+      margin-bottom: 4px;
+    }
+    .value {
+      font-weight: 600;
+      color: #f1f5f9;
+      font-size: 12px;
+    }
+    .input-group {
+      margin-top: 8px;
+    }
+    input {
+      width: 100%;
+      box-sizing: border-box;
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: white;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+    .btn {
+      width: 100%;
+      background: #059669;
+      color: white;
+      border: none;
+      padding: 9px;
+      border-radius: 8px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 8px;
+      font-size: 12px;
+    }
+    .btn:hover {
+      background: #10b981;
+    }
+    .status {
+      font-size: 11px;
+      color: #94a3b8;
+      text-align: center;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="title">⚡ Job Radar Assistant</div>
+    <span class="badge" id="conn-badge">Connecting...</span>
+  </div>
+
+  <div class="card">
+    <div class="label">Active Candidate Profile</div>
+    <div class="value" id="candidate-name">Loading candidate...</div>
+    <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;" id="candidate-email">---</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Job Radar Server Endpoint</div>
+    <div class="input-group">
+      <input type="text" id="server-url" value="http://localhost:3000" />
+    </div>
+    <button class="btn" id="save-server-btn">Save Server URL</button>
+  </div>
+
+  <div class="status" id="status-msg">Open LinkedIn Easy Apply modal to auto-fill!</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

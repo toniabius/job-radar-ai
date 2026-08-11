@@ -72,11 +72,70 @@ export interface ResumeData {
   experienceYears: number;
 }
 
+export interface KnowledgeEntry {
+  id: string;
+  questionPattern: string;
+  answer: string;
+  category?: 'Experience' | 'Legal' | 'Compensation' | 'Personal' | 'Custom';
+  updatedAt?: string;
+}
+
+export interface CustomContactField {
+  id: string;
+  label: string;
+  value: string;
+}
+
+export interface WorkExperienceEntry {
+  id: string;
+  title: string;
+  company: string;
+  location?: string;
+  currentlyWorkHere?: boolean;
+  startMonth?: string;
+  startYear?: string;
+  endMonth?: string;
+  endYear?: string;
+  description?: string;
+}
+
+export interface CandidateProfile {
+  firstName: string;
+  lastName: string;
+  fullName?: string;
+  preferredName?: string;
+  email: string;
+  phone: string;
+  phoneDeviceType?: string;
+  howDidYouHear?: string;
+  city: string;
+  state: string;
+  zipCode: string;
+  country: string;
+  linkedInUrl: string;
+  githubUrl: string;
+  portfolioUrl: string;
+  workAuthorization: string;
+  sponsorshipRequired: 'Yes' | 'No';
+  legallyAuthorized: 'Yes' | 'No';
+  yearsExperience: number;
+  desiredSalary: string;
+  noticePeriod: string;
+  relocation: 'Yes' | 'No' | 'Hybrid / Flexible';
+  gender?: string;
+  veteranStatus?: string;
+  disabilityStatus?: string;
+  knowledgeBase: KnowledgeEntry[];
+  customFields?: CustomContactField[];
+  workExperience?: WorkExperienceEntry[];
+}
+
 export interface UserProfile {
   id: string;
   name: string;
   config: AppConfig;
   resume: ResumeData;
+  candidateProfile?: CandidateProfile;
   createdAt: string;
   updatedAt: string;
 }

@@ -1,10 +1,11 @@
-import { AppConfig, Job, ResumeData } from "../src/types.js";
+import { AppConfig, Job, ResumeData, CandidateProfile } from "../src/types.js";
 
 export interface UserProfileData {
   id: string;
   name: string;
   config: AppConfig;
   resume: ResumeData;
+  candidateProfile?: CandidateProfile;
   createdAt: string;
   updatedAt: string;
 }

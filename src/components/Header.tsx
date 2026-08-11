@@ -1,15 +1,19 @@
 import React from 'react';
-import { Radar, Play, FileText, Database, Settings, User, Sparkles, Activity, History, Terminal } from 'lucide-react';
+import { Radar, Play, FileText, Database, Settings, User, Sparkles, Activity, History, Terminal, UserCheck } from 'lucide-react';
+import { UserProfile } from '../types';
 
 interface HeaderProps {
-  activeTab: 'dashboard' | 'database' | 'config' | 'report' | 'logs';
-  setActiveTab: (tab: 'dashboard' | 'database' | 'config' | 'report' | 'logs') => void;
+  activeTab: 'dashboard' | 'database' | 'config' | 'report' | 'logs' | 'candidate-profile';
+  setActiveTab: (tab: 'dashboard' | 'database' | 'config' | 'report' | 'logs' | 'candidate-profile') => void;
   onRunPipeline: () => void;
   isRunningPipeline: boolean;
   totalJobs: number;
   strongMatchesCount: number;
   minimumScoreThreshold?: number;
   activeProfileName?: string;
+  activeProfileId?: string;
+  profiles?: UserProfile[];
+  onSelectProfile?: (profileId: string) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -21,6 +25,9 @@ export const Header: React.FC<HeaderProps> = ({
   strongMatchesCount,
   minimumScoreThreshold = 65,
   activeProfileName,
+  activeProfileId,
+  profiles,
+  onSelectProfile,
 }) => {
   return (
     <header className="border-b border-slate-200 bg-white/95 backdrop-blur-md sticky top-0 z-30">
@@ -47,12 +54,28 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Quick Metrics & Pipeline Run Action */}
           <div className="flex items-center space-x-3">
-            {activeProfileName && (
+            {profiles && profiles.length > 0 && onSelectProfile ? (
+              <div className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-900 text-xs font-semibold">
+                <User className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <span className="text-[10px] text-indigo-500 font-bold uppercase hidden md:inline">Profile:</span>
+                <select
+                  value={activeProfileId}
+                  onChange={(e) => onSelectProfile(e.target.value)}
+                  className="bg-transparent border-none text-xs font-bold text-indigo-900 focus:outline-none cursor-pointer max-w-[150px] truncate"
+                >
+                  {profiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : activeProfileName ? (
               <div className="hidden sm:flex items-center space-x-1.5 px-3 py-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-semibold">
                 <User className="w-3.5 h-3.5 text-indigo-600" />
                 <span className="truncate max-w-[120px]">{activeProfileName}</span>
               </div>
-            )}
+            ) : null}
 
             <div className="hidden lg:flex items-center space-x-4 mr-2 text-xs border-r border-slate-200 pr-4">
               <div className="flex items-center space-x-1.5 text-slate-600">
@@ -104,6 +127,18 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Settings className="w-4 h-4 mr-1.5" />
             Config & Profiles
+          </button>
+
+          <button
+            onClick={() => setActiveTab('candidate-profile')}
+            className={`inline-flex items-center px-3 py-2 border-b-2 text-xs font-medium whitespace-nowrap transition-colors ${
+              activeTab === 'candidate-profile'
+                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-md font-bold'
+                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
+            }`}
+          >
+            <UserCheck className="w-4 h-4 mr-1.5 text-emerald-600" />
+            Apply Assistant & QA
           </button>
 
           <button

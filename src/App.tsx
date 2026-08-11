@@ -8,13 +8,14 @@ import { ReportView } from './components/ReportView';
 import { AddJobModal } from './components/AddJobModal';
 import { ScanProgressModal } from './components/ScanProgressModal';
 import { ScanLogsView } from './components/ScanLogsView';
-import { Job, AppConfig, ResumeData, UserProfile, PipelineLog } from './types';
+import { CandidateProfileEditor } from './components/CandidateProfileEditor';
+import { Job, AppConfig, ResumeData, UserProfile, PipelineLog, CandidateProfile } from './types';
 import { Search, Sparkles, Filter, ArrowUpDown, Building, DollarSign, MapPin, X, Clock, User, Trash2, CheckCircle2 } from 'lucide-react';
 import { parseLocationGroup, parseMinSalary } from './utils/location';
 import { playCompletionChime } from './utils/audio';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'database' | 'config' | 'report' | 'logs'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'database' | 'config' | 'report' | 'logs' | 'candidate-profile'>('dashboard');
   
   // App state
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -22,6 +23,7 @@ export default function App() {
   const [activeProfileId, setActiveProfileId] = useState<string>('default');
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [resume, setResume] = useState<ResumeData | null>(null);
+  const [candidateProfile, setCandidateProfile] = useState<CandidateProfile | null>(null);
   const [reportContent, setReportContent] = useState<string>('');
   const [pipelineLogs, setPipelineLogs] = useState<PipelineLog[]>([]);
   const [isRunningPipeline, setIsRunningPipeline] = useState<boolean>(false);
@@ -58,7 +60,41 @@ export default function App() {
     fetchJobs();
     fetchProfiles();
     fetchReport();
+    fetchCandidateProfile();
   }, []);
+
+  const fetchCandidateProfile = async () => {
+    try {
+      const res = await fetch('/api/candidate-profile');
+      if (res.ok) {
+        const data = await res.json();
+        setCandidateProfile(data);
+      }
+    } catch (err) {
+      console.error('Error fetching candidate profile:', err);
+    }
+  };
+
+  const handleSaveCandidateProfile = async (updated: CandidateProfile) => {
+    try {
+      const res = await fetch('/api/candidate-profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ candidateProfile: updated, profileId: activeProfileId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.candidateProfile) {
+          setCandidateProfile(data.candidateProfile);
+        }
+        if (data.profiles) {
+          setProfiles(data.profiles);
+        }
+      }
+    } catch (err) {
+      console.error('Error saving candidate profile:', err);
+    }
+  };
 
   const fetchProfiles = async () => {
     try {
@@ -71,6 +107,9 @@ export default function App() {
         if (active) {
           setConfig(active.config);
           setResume(active.resume);
+          if (active.candidateProfile) {
+            setCandidateProfile(active.candidateProfile);
+          }
         }
       }
     } catch (err) {
@@ -543,6 +582,7 @@ export default function App() {
         setProfiles(data.profiles);
         if (data.config) setConfig(data.config);
         if (data.resume) setResume(data.resume);
+        if (data.candidateProfile) setCandidateProfile(data.candidateProfile);
         if (data.jobs) setJobs(data.jobs);
         if (data.report) setReportContent(data.report);
         else fetchReport();
@@ -566,6 +606,7 @@ export default function App() {
         setProfiles(data.profiles);
         if (data.config) setConfig(data.config);
         if (data.resume) setResume(data.resume);
+        if (data.candidateProfile) setCandidateProfile(data.candidateProfile);
         if (data.jobs) setJobs(data.jobs);
         if (data.report) setReportContent(data.report);
         else fetchReport();
@@ -587,6 +628,7 @@ export default function App() {
         setProfiles(data.profiles);
         if (data.config) setConfig(data.config);
         if (data.resume) setResume(data.resume);
+        if (data.candidateProfile) setCandidateProfile(data.candidateProfile);
         if (data.jobs) setJobs(data.jobs);
         if (data.report) setReportContent(data.report);
         else fetchReport();
@@ -740,6 +782,9 @@ export default function App() {
         strongMatchesCount={strongMatchesCount}
         minimumScoreThreshold={minScoreThreshold}
         activeProfileName={activeProfileName}
+        activeProfileId={activeProfileId}
+        profiles={profiles}
+        onSelectProfile={handleSelectProfile}
       />
 
       {/* Main Container */}
@@ -1076,6 +1121,20 @@ export default function App() {
             onRefresh={fetchPipelineLogs}
             onClear={handleClearPipelineLogs}
             onRunScan={handleRunPipeline}
+          />
+        )}
+
+        {/* CANDIDATE AUTO-FILL PROFILE & QA ASSISTANT VIEW */}
+        {activeTab === 'candidate-profile' && (
+          <CandidateProfileEditor
+            candidateProfile={candidateProfile}
+            jobs={jobs}
+            activeProfileId={activeProfileId}
+            profiles={profiles}
+            onSelectProfile={handleSelectProfile}
+            onCreateProfile={handleCreateProfile}
+            onDeleteProfile={handleDeleteProfile}
+            onSaveCandidateProfile={handleSaveCandidateProfile}
           />
         )}
 

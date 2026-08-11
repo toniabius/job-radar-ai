@@ -1,0 +1,161 @@
+/* Job Radar Floating Control Panel on LinkedIn Easy Apply */
+#jr-autofill-panel {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 999999;
+  background-color: #0f172a;
+  color: #f8fafc;
+  border: 1px solid #334155;
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  width: 320px;
+  font-size: 13px;
+  line-height: 1.4;
+  transition: all 0.2s ease-in-out;
+}
+
+#jr-autofill-panel .jr-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #1e293b;
+}
+
+#jr-autofill-panel .jr-title {
+  font-weight: 700;
+  font-size: 13px;
+  color: #38bdf8;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#jr-autofill-panel .jr-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#jr-autofill-panel .jr-badge-active {
+  background-color: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 9999px;
+  font-weight: 600;
+}
+
+#jr-autofill-panel .jr-badge-waiting {
+  background-color: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 9999px;
+  font-weight: 600;
+}
+
+#jr-autofill-panel .jr-icon-btn {
+  background: transparent;
+  border: 1px solid #334155;
+  color: #94a3b8;
+  border-radius: 6px;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: bold;
+  line-height: 1;
+}
+
+#jr-autofill-panel .jr-icon-btn:hover {
+  background-color: #334155;
+  color: #ffffff;
+}
+
+#jr-autofill-panel.jr-minimized {
+  width: auto;
+  padding: 8px 12px;
+}
+
+#jr-autofill-panel.jr-minimized .jr-header {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+#jr-autofill-panel .jr-btn {
+  background-color: #059669;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background-color 0.15s ease;
+}
+
+#jr-autofill-panel .jr-btn:hover {
+  background-color: #10b981;
+}
+
+#jr-autofill-panel .jr-btn-secondary {
+  background-color: #1e293b;
+  color: #cbd5e1;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-weight: 500;
+  font-size: 11px;
+  cursor: pointer;
+  width: 100%;
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+#jr-autofill-panel .jr-btn-secondary:hover {
+  background-color: #334155;
+  color: #ffffff;
+}
+
+#jr-autofill-panel .jr-status {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 8px;
+  text-align: center;
+}
+
+/* Field highlight when autofilled by extension */
+.jr-autofilled-field {
+  border: 2px solid #10b981 !important;
+  background-color: #f0fdf4 !important;
+  transition: border-color 0.3s ease;
+}
+
+.jr-autofilled-badge {
+  font-size: 10px;
+  background-color: #10b981;
+  color: white;
+  padding: 1px 4px;
+  border-radius: 4px;
+  margin-left: 4px;
+  display: inline-block;
+}

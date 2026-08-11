@@ -25,7 +25,12 @@ import {
   saveJobsDB,
   getProfileReportPath,
   getProfileReportsDir,
+  loadCandidateProfile,
+  saveCandidateProfile,
+  CANDIDATE_PROFILE_JSON_PATH,
+  getDefaultCandidateProfile,
 } from "./server/storage.js";
+import { generateApplicationAnswer, parseCandidateProfileWithAI } from "./server/gemini.js";
 import {
   extractSkillsRegex,
   extractSkillsWithGemini,
@@ -61,6 +66,7 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Serve output files statically
 app.use("/output", express.static(path.join(process.cwd(), "output")));
+app.use("/extension", express.static(path.join(process.cwd(), "public/extension")));
 
 // Health check endpoint
 app.get("/api/health", (req, res) => {
@@ -87,6 +93,9 @@ app.post("/api/profiles/select", (req, res) => {
   saveConfig(target.config);
   writeFileIfChanged(RESUME_PATH, target.resume.content);
 
+  const candProfile = loadCandidateProfile(profileId);
+  writeFileIfChanged(CANDIDATE_PROFILE_JSON_PATH, JSON.stringify(candProfile, null, 2));
+
   const profileJobs = loadJobsDB(profileId);
   saveJobsDB(profileJobs, profileId);
   const reportMd = generateMarkdownReport(profileJobs, profileId);
@@ -99,6 +108,7 @@ app.post("/api/profiles/select", (req, res) => {
     activeProfile: target,
     config: target.config,
     resume: loadResume(),
+    candidateProfile: candProfile,
     jobs: profileJobs,
     report: reportMd,
   });
@@ -113,6 +123,7 @@ app.post("/api/profiles", (req, res) => {
   const store = loadProfilesData();
   let baseConfig = loadConfig();
   let baseResumeContent = loadResume().content;
+  let baseCandProfile = loadCandidateProfile();
   let baseJobs: Job[] = [];
 
   if (copyFromProfileId) {
@@ -120,8 +131,11 @@ app.post("/api/profiles", (req, res) => {
     if (source) {
       baseConfig = JSON.parse(JSON.stringify(source.config));
       baseResumeContent = source.resume.content;
+      baseCandProfile = JSON.parse(JSON.stringify(loadCandidateProfile(copyFromProfileId)));
       baseJobs = JSON.parse(JSON.stringify(loadJobsDB(copyFromProfileId)));
     }
+  } else {
+    baseCandProfile = getDefaultCandidateProfile();
   }
 
   const newId = `profile-${Date.now()}`;
@@ -131,6 +145,7 @@ app.post("/api/profiles", (req, res) => {
     name: name.trim(),
     config: baseConfig,
     resume: parsedResume,
+    candidateProfile: baseCandProfile,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -141,6 +156,7 @@ app.post("/api/profiles", (req, res) => {
 
   saveConfig(baseConfig);
   writeFileIfChanged(RESUME_PATH, baseResumeContent);
+  saveCandidateProfile(baseCandProfile, newId);
   saveJobsDB(baseJobs, newId);
   const reportMd = generateMarkdownReport(baseJobs, newId);
 
@@ -152,6 +168,7 @@ app.post("/api/profiles", (req, res) => {
     activeProfile: newProfile,
     config: baseConfig,
     resume: loadResume(),
+    candidateProfile: baseCandProfile,
     jobs: baseJobs,
     report: reportMd,
   });
@@ -249,6 +266,8 @@ app.delete("/api/profiles/:id", (req, res) => {
     const newActive = store.profiles[0];
     saveConfig(newActive.config);
     writeFileIfChanged(RESUME_PATH, newActive.resume.content);
+    const cand = loadCandidateProfile(newActive.id);
+    writeFileIfChanged(CANDIDATE_PROFILE_JSON_PATH, JSON.stringify(cand, null, 2));
   }
 
   saveProfilesData(store);
@@ -259,12 +278,14 @@ app.delete("/api/profiles/:id", (req, res) => {
   const reportMd = generateMarkdownReport(activeJobs, activePid);
 
   const updatedStore = loadProfilesData();
+  const activeCand = loadCandidateProfile(activePid);
   res.json({
     success: true,
     activeProfileId: updatedStore.activeProfileId,
     profiles: updatedStore.profiles,
     config: loadConfig(),
     resume: loadResume(),
+    candidateProfile: activeCand,
     jobs: activeJobs,
     report: reportMd,
   });
@@ -426,6 +447,99 @@ FORMATTING INSTRUCTIONS:
   } catch (err: any) {
     console.error("PDF Resume parse error:", err);
     res.status(500).json({ error: "Failed to parse PDF resume: " + err.message });
+  }
+});
+
+// 2b. Candidate Auto-Fill Profile & Knowledge Base Endpoints
+app.get("/api/candidate-profile", (req, res) => {
+  const profileId = req.query.profileId as string | undefined;
+  const profile = loadCandidateProfile(profileId);
+  res.json(profile);
+});
+
+app.post("/api/candidate-profile", (req, res) => {
+  const { candidateProfile, profileId } = req.body;
+  if (!candidateProfile) {
+    return res.status(400).json({ error: "Candidate profile object is required" });
+  }
+  const saved = saveCandidateProfile(candidateProfile, profileId);
+  const store = loadProfilesData();
+  res.json({ success: true, candidateProfile: saved, profiles: store.profiles });
+});
+
+app.post("/api/candidate-profile/generate-answer", async (req, res) => {
+  try {
+    const { question, jobId, jobContext } = req.body;
+    if (!question || !question.trim()) {
+      return res.status(400).json({ error: "Application question is required" });
+    }
+
+    const candidateProfile = loadCandidateProfile();
+    const resumeData = loadResume();
+
+    let contextToUse = jobContext || "";
+    if (!contextToUse && jobId) {
+      const jobs = loadJobsDB();
+      const matchedJob = jobs.find((j) => j.id === jobId);
+      if (matchedJob) {
+        contextToUse = `Company: ${matchedJob.company}\nTitle: ${matchedJob.title}\nDescription: ${matchedJob.description}`;
+      }
+    }
+
+    const generatedAnswer = await generateApplicationAnswer(
+      question.trim(),
+      contextToUse,
+      candidateProfile,
+      resumeData.content
+    );
+
+    res.json({ success: true, answer: generatedAnswer });
+  } catch (err: any) {
+    console.error("Generate answer error:", err);
+    res.status(500).json({ error: err.message || "Failed to generate answer" });
+  }
+});
+
+app.post("/api/candidate-profile/ai-parse", async (req, res) => {
+  try {
+    const { text } = req.body || {};
+    let textToParse = text || "";
+
+    if (!textToParse || !textToParse.trim()) {
+      const resume = loadResume();
+      textToParse = resume.content || "";
+    }
+
+    if (!textToParse || !textToParse.trim()) {
+      return res.status(400).json({
+        error: "No text or resume content found to parse. Please upload or paste resume text."
+      });
+    }
+
+    const parsedData = await parseCandidateProfileWithAI(textToParse);
+
+    // Merge with current profile to avoid wiping fields if empty
+    const currentProfile = loadCandidateProfile();
+    const updatedProfile = {
+      ...currentProfile,
+      ...parsedData,
+      knowledgeBase: [
+        ...(currentProfile.knowledgeBase || []),
+        ...(parsedData.knowledgeBase || []).filter(
+          (newKb: any) =>
+            !(currentProfile.knowledgeBase || []).some(
+              (oldKb: any) =>
+                oldKb.questionPattern.toLowerCase() === newKb.questionPattern.toLowerCase()
+            )
+        )
+      ]
+    };
+
+    const saved = saveCandidateProfile(updatedProfile);
+    res.json({ success: true, candidateProfile: saved });
+  } catch (err: any) {
+    console.error("AI Candidate Profile parse error:", err);
+    res.status(500).json({ error: err.message || "Failed to parse candidate profile" });
   }
 });
 

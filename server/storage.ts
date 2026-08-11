@@ -1,6 +1,66 @@
 import path from "path";
 import fs from "fs";
-import { AppConfig, Job, ResumeData } from "../src/types.js";
+import { AppConfig, Job, ResumeData, CandidateProfile } from "../src/types.js";
+
+export const CANDIDATE_PROFILE_JSON_PATH = path.join(process.cwd(), "config", "candidate_profile.json");
+
+export function getDefaultCandidateProfile(): CandidateProfile {
+  try {
+    if (fs.existsSync(CANDIDATE_PROFILE_JSON_PATH)) {
+      const data = JSON.parse(fs.readFileSync(CANDIDATE_PROFILE_JSON_PATH, "utf-8"));
+      if (data && typeof data === "object") {
+        return data as CandidateProfile;
+      }
+    }
+  } catch (err) {
+    console.error("Error reading candidate_profile.json:", err);
+  }
+  const fallback: CandidateProfile = {
+    firstName: "Alex",
+    lastName: "Morgan",
+    fullName: "Alex Morgan",
+    preferredName: "Alex",
+    email: "alex.morgan@example.com",
+    phone: "+1 (555) 234-5678",
+    phoneDeviceType: "Mobile",
+    howDidYouHear: "LinkedIn",
+    city: "San Francisco",
+    state: "CA",
+    zipCode: "94105",
+    country: "United States",
+    linkedInUrl: "https://linkedin.com/in/alexmorgan-dev",
+    githubUrl: "https://github.com/alexmorgan-dev",
+    portfolioUrl: "https://alexmorgan.dev",
+    workAuthorization: "US Citizen",
+    sponsorshipRequired: "No",
+    legallyAuthorized: "Yes",
+    yearsExperience: 6,
+    desiredSalary: "$165,000",
+    noticePeriod: "2 weeks",
+    relocation: "Hybrid / Flexible",
+    gender: "Decline to Self-Identify",
+    veteranStatus: "I am not a protected veteran",
+    disabilityStatus: "No, I do not have a disability",
+    knowledgeBase: [],
+    customFields: [],
+    workExperience: [
+      {
+        id: "exp-1",
+        title: "Senior Software Engineer",
+        company: "Capital One",
+        location: "McLean VA",
+        currentlyWorkHere: true,
+        startMonth: "4",
+        startYear: "2024",
+        endMonth: "",
+        endYear: "",
+        description: "● MigrationAccelerator: Architected and delivered a self-service legacy dataset migration tool that cut dataset migration time by 70%, reduced support tickets by 50%, and generated $30M in operational savings; further built a CLI-based agent using Claude to automate bulk migration end-to-end, and to detect and remediate dataset validation and registration errors automatically.\n● Real-Time CDC Kinesis Processor: Designed and led development of a CDC pipeline framework template application using AWS Kinesis and event-driven architecture, enabling near real-time data synchronization and replacing a batch ETL system with hours of delay."
+      }
+    ]
+  };
+  writeFileIfChanged(CANDIDATE_PROFILE_JSON_PATH, JSON.stringify(fallback, null, 2));
+  return fallback;
+}
 import { DEFAULT_CONFIG, SAMPLE_JOBS } from "../src/data/defaultData.js";
 import { UserProfileData, ProfilesStore } from "./types.js";
 import { writeFileIfChanged, dumpYaml } from "./utils.js";
@@ -60,6 +120,56 @@ export function loadProfilesData(): ProfilesStore {
 
 export function saveProfilesData(store: ProfilesStore): void {
   writeFileIfChanged(PROFILES_JSON_PATH, JSON.stringify(store, null, 2));
+}
+
+export function loadCandidateProfile(profileId?: string): CandidateProfile {
+  try {
+    const store = loadProfilesData();
+    const pid = profileId || store.activeProfileId;
+    const active = store.profiles.find((p) => p.id === pid);
+
+    if (active && active.candidateProfile) {
+      return active.candidateProfile;
+    }
+
+    if (fs.existsSync(CANDIDATE_PROFILE_JSON_PATH)) {
+      const candData: CandidateProfile = JSON.parse(fs.readFileSync(CANDIDATE_PROFILE_JSON_PATH, "utf-8"));
+      if (active) {
+        active.candidateProfile = candData;
+        saveProfilesData(store);
+      }
+      return candData;
+    }
+
+    if (active) {
+      const def = getDefaultCandidateProfile();
+      active.candidateProfile = def;
+      saveProfilesData(store);
+      return def;
+    }
+  } catch (err) {
+    console.error("Error loading candidate profile:", err);
+  }
+  return getDefaultCandidateProfile();
+}
+
+export function saveCandidateProfile(candProfile: CandidateProfile, profileId?: string): CandidateProfile {
+  try {
+    const store = loadProfilesData();
+    const pid = profileId || store.activeProfileId;
+    const active = store.profiles.find((p) => p.id === pid);
+    if (active) {
+      active.candidateProfile = candProfile;
+      active.updatedAt = new Date().toISOString();
+      saveProfilesData(store);
+    }
+    if (!profileId || profileId === store.activeProfileId) {
+      writeFileIfChanged(CANDIDATE_PROFILE_JSON_PATH, JSON.stringify(candProfile, null, 2));
+    }
+  } catch (err) {
+    console.error("Error saving candidate profile:", err);
+  }
+  return candProfile;
 }
 
 export function getActiveProfileId(): string {
