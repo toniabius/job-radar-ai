@@ -1119,7 +1119,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                   <div className="flex items-center space-x-2 pt-2">
                     <input
                       type="text"
-                      placeholder="Add location (e.g., Remote, United States, California, Seattle)"
+                      placeholder="Add location (e.g., Washington DC, Virginia, Maryland, Washington, Remote)"
                       value={newLocation}
                       onChange={(e) => setNewLocation(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && addLocation()}
@@ -1138,7 +1138,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                       Quick Add Presets:
                     </span>
                     <div className="flex flex-wrap gap-1">
-                      {['Remote', 'United States', 'California', 'New York', 'Canada', 'United Kingdom', 'Hybrid'].map((preset) => (
+                      {['Washington', 'Virginia', 'Maryland', 'Washington DC', 'California', 'New York', 'Remote', 'United States', 'Hybrid'].map((preset) => (
                         <button
                           key={preset}
                           type="button"
@@ -1193,11 +1193,14 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                   <div className="flex flex-wrap gap-1.5">
                     {[
                       'Requires US Citizenship / Security Clearance',
-                      'Data Engineer or Data Architect or Test Engineer roles',
+                      'Data Engineer or Data Architect',
                       'Pure Frontend without Backend architecture',
                       'Contractor or 1099 roles',
                       'Recruiting agency / staffing firm posts (only company direct hire)',
                       '5 days On-site requirement',
+                      'Test Engineer roles',
+                      'Machine Learning Engineer roles',
+                      'People Manager roles',
                     ].map((preset) => {
                       const isAdded = (config.hard_blockers || '').toLowerCase().includes(preset.toLowerCase());
                       return (

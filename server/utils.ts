@@ -260,6 +260,12 @@ export const KNOWN_GEO_LOCATIONS: Record<string, LocationGeoInfo> = {
   california: { geoId: "102095887", locationStr: "California, United States" },
   ca: { geoId: "102095887", locationStr: "California, United States" },
 
+  virginia: { geoId: "102230683", locationStr: "Virginia, United States" },
+  va: { geoId: "102230683", locationStr: "Virginia, United States" },
+
+  maryland: { geoId: "101282230", locationStr: "Maryland, United States" },
+  md: { geoId: "101282230", locationStr: "Maryland, United States" },
+
   "new york": { geoId: "105080838", locationStr: "New York, United States" },
   ny: { geoId: "105080838", locationStr: "New York, United States" },
 

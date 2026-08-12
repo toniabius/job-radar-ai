@@ -4,60 +4,81 @@
 
   let activeProfile = null;
   let isMinimized = false;
+  let isClosedByUser = false;
   let isDragging = false;
   let dragOffsetX = 0;
   let dragOffsetY = 0;
 
-  // Request candidate profile from background service worker
-  function fetchCandidateProfile() {
+  let isContextInvalidated = false;
+
+  // Safe wrapper for chrome.runtime.sendMessage to handle extension updates/context invalidation
+  function safeSendMessage(message) {
     return new Promise((resolve) => {
-      let resolved = false;
-      const timer = setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          console.warn('⚠️ Fetch candidate profile timed out after 2.5s');
-          resolve(activeProfile);
-        }
-      }, 2500);
+      if (isContextInvalidated) {
+        resolve({ success: false, error: 'Context invalidated' });
+        return;
+      }
 
       try {
-        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-          chrome.runtime.sendMessage({ action: 'GET_PROFILE' }, (response) => {
-            if (resolved) return;
-            resolved = true;
-            clearTimeout(timer);
-            if (chrome.runtime.lastError) {
-              console.warn('⚠️ Chrome runtime error during profile fetch:', chrome.runtime.lastError.message);
-              resolve(activeProfile);
-              return;
-            }
-            if (response && response.success && response.profile) {
-              activeProfile = response.profile;
-              console.log('✅ Job Radar loaded candidate profile:', activeProfile.firstName, activeProfile.lastName);
-              resolve(activeProfile);
-            } else {
-              console.warn('⚠️ Could not fetch candidate profile from Job Radar server.');
-              resolve(activeProfile);
-            }
-          });
-        } else {
-          resolved = true;
-          clearTimeout(timer);
-          resolve(activeProfile);
+        if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.id || !chrome.runtime.sendMessage) {
+          isContextInvalidated = true;
+          resolve({ success: false, error: 'Extension runtime unavailable' });
+          return;
         }
+
+        chrome.runtime.sendMessage(message, (response) => {
+          if (chrome.runtime.lastError) {
+            const err = chrome.runtime.lastError.message || '';
+            if (err.includes('invalidated') || err.includes('context')) {
+              isContextInvalidated = true;
+            }
+            resolve({ success: false, error: err });
+            return;
+          }
+          resolve(response || { success: false });
+        });
       } catch (err) {
-        if (!resolved) {
-          resolved = true;
-          clearTimeout(timer);
-          console.warn('⚠️ Error sending message to extension background:', err);
-          resolve(activeProfile);
+        const errMsg = err?.message || '';
+        if (errMsg.includes('invalidated') || errMsg.includes('context')) {
+          isContextInvalidated = true;
         }
+        resolve({ success: false, error: errMsg });
       }
     });
   }
 
+  // Direct fetch fallback if extension messaging fails or context is invalidated
+  async function fetchDirectProfile() {
+    try {
+      const res = await fetch('http://localhost:3000/api/candidate-profile');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && (data.firstName || data.email)) {
+          activeProfile = data;
+          console.log('✅ Job Radar loaded candidate profile directly from server:', activeProfile.firstName, activeProfile.lastName);
+          return activeProfile;
+        }
+      }
+    } catch (e) {
+      // ignore server fetch errors
+    }
+    return activeProfile;
+  }
+
+  // Request candidate profile from background service worker or direct server fallback
+  async function fetchCandidateProfile() {
+    const response = await safeSendMessage({ action: 'GET_PROFILE' });
+    if (response && response.success && response.profile) {
+      activeProfile = response.profile;
+      console.log('✅ Job Radar loaded candidate profile via extension:', activeProfile.firstName, activeProfile.lastName);
+      return activeProfile;
+    }
+    return await fetchDirectProfile();
+  }
+
   // Inject floating control panel
   function checkAndInjectControlPanel() {
+    if (isClosedByUser) return;
     if (!document.getElementById('jr-autofill-panel')) {
       injectControlPanel();
     }
@@ -79,7 +100,7 @@
         if (hintEl) hintEl.innerText = 'Click AutoFill to populate all inputs, radios, & dropdowns.';
       } else {
         badgeEl.className = 'jr-badge jr-badge-waiting';
-        badgeEl.innerText = '🔵 Job Radar Active';
+        badgeEl.innerText = '🔵 Active';
         if (hintEl) hintEl.innerText = 'Ready on this page. Open any job application to auto-fill.';
       }
     }
@@ -93,11 +114,12 @@
     panel.innerHTML = `
       <div class="jr-header" id="jr-panel-header">
         <div class="jr-title">
-          <span>⚡ Job Radar</span>
+          <span>⚡ Apply Assistant</span>
         </div>
         <div class="jr-header-actions">
           <span id="jr-detection-badge" class="jr-badge jr-badge-waiting">🔵 Active</span>
           <button id="jr-btn-toggle-min" class="jr-icon-btn" title="Minimize / Expand Panel">_</button>
+          <button id="jr-btn-close" class="jr-icon-btn" title="Close Extension Panel">✕</button>
         </div>
       </div>
       <div id="jr-panel-body" class="jr-body">
@@ -109,7 +131,7 @@
           <label for="jr-cb-override" style="all: unset !important; cursor: pointer !important; user-select: none !important; font-size: 11px !important; color: #e2e8f0 !important; font-family: system-ui, sans-serif !important;">Override existing form values</label>
         </div>
         <button id="jr-btn-autofill" class="jr-btn">
-          <span>⚡ AutoFill Page & Radios</span>
+          <span>⚡ AutoFill</span>
         </button>
         <button id="jr-btn-ai-answer" class="jr-btn-secondary">
           <span>✨ Answer Open Questions with AI</span>
@@ -120,9 +142,32 @@
 
     document.body.appendChild(panel);
 
+    const closeBtn = document.getElementById('jr-btn-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        isClosedByUser = true;
+        const p = document.getElementById('jr-autofill-panel');
+        if (p) {
+          p.style.display = 'none';
+          p.remove();
+        }
+      });
+      closeBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+    }
+
+    const minBtn = document.getElementById('jr-btn-toggle-min');
+    if (minBtn) {
+      minBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+      minBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleMinimizePanel();
+      });
+    }
+
     document.getElementById('jr-btn-autofill').addEventListener('click', handleAutoFillCurrentPage);
     document.getElementById('jr-btn-ai-answer').addEventListener('click', handleAnswerOpenQuestions);
-    document.getElementById('jr-btn-toggle-min').addEventListener('click', toggleMinimizePanel);
 
     // Make panel draggable
     setupDraggable(panel);
@@ -136,7 +181,7 @@
     if (!header) return;
 
     header.addEventListener('mousedown', (e) => {
-      if (e.target.tagName === 'BUTTON') return;
+      if (e.target.closest('button')) return;
       isDragging = true;
       dragOffsetX = e.clientX - panel.offsetLeft;
       dragOffsetY = e.clientY - panel.offsetTop;
@@ -161,20 +206,23 @@
 
   function toggleMinimizePanel() {
     const panel = document.getElementById('jr-autofill-panel');
-    const body = document.getElementById('jr-panel-body');
     const toggleBtn = document.getElementById('jr-btn-toggle-min');
 
-    if (!panel || !body) return;
+    if (!panel) return;
 
     isMinimized = !isMinimized;
     if (isMinimized) {
-      body.style.display = 'none';
       panel.classList.add('jr-minimized');
-      if (toggleBtn) toggleBtn.innerText = '▢';
+      if (toggleBtn) {
+        toggleBtn.innerText = '+';
+        toggleBtn.title = 'Expand Apply Assistant';
+      }
     } else {
-      body.style.display = 'block';
       panel.classList.remove('jr-minimized');
-      if (toggleBtn) toggleBtn.innerText = '_';
+      if (toggleBtn) {
+        toggleBtn.innerText = '_';
+        toggleBtn.title = 'Minimize Panel';
+      }
     }
   }
 
@@ -281,12 +329,28 @@
         valueToSet = activeProfile.yearsExperience;
       } else if (combinedKey.includes('notice period') || combinedKey.includes('how soon can you start')) {
         valueToSet = activeProfile.noticePeriod;
-      } else if (combinedKey.includes('eligibility') || combinedKey.includes('legally authorized') || combinedKey.includes('eligible to work')) {
-        valueToSet = activeProfile.legallyAuthorized || 'Yes';
-      } else if (combinedKey.includes('sponsorship')) {
+      } else if (
+        combinedKey.includes('sponsorship') ||
+        combinedKey.includes('require sponsorship') ||
+        combinedKey.includes('immigration-related') ||
+        combinedKey.includes('visa sponsorship') ||
+        combinedKey.includes('require visa')
+      ) {
         valueToSet = activeProfile.sponsorshipRequired || 'No';
-      } else if (combinedKey.includes('authorization') || combinedKey.includes('visa status') || combinedKey.includes('work status')) {
-        valueToSet = activeProfile.workAuthorization;
+      } else if (
+        combinedKey.includes('legally authorized') ||
+        combinedKey.includes('authorized to work') ||
+        combinedKey.includes('legally eligible') ||
+        combinedKey.includes('eligible to work') ||
+        combinedKey.includes('eligibility') ||
+        combinedKey.includes('right to work') ||
+        combinedKey.includes('country/region') ||
+        combinedKey.includes('lawful permanent resident') ||
+        combinedKey.includes('employment eligibility')
+      ) {
+        valueToSet = activeProfile.legallyAuthorized || 'Yes';
+      } else if (combinedKey.includes('work authorization') || combinedKey.includes('visa status') || combinedKey.includes('work permit') || combinedKey.includes('work status')) {
+        valueToSet = activeProfile.workAuthorization || 'Authorized to work';
       } else if (combinedKey.includes('veteran status') || combinedKey.includes('veteran')) {
         valueToSet = activeProfile.veteranStatus || 'I am not a protected veteran';
       } else if (combinedKey.includes('gender') || combinedKey.includes('sex')) {
@@ -404,7 +468,7 @@
 
     // 2. Fill Radio Groups & Fieldsets (Sponsorship, Authorization, EEO, Custom Questions)
     const radioContainers = container.querySelectorAll(
-      'fieldset, div.fb-dash-form-element, div.jobs-easy-apply-form-section__group, div[role="radiogroup"], div.form-group, div.form-entry, div.question-container'
+      'fieldset, div.fb-dash-form-element, div.jobs-easy-apply-form-section__group, div[role="radiogroup"], div.form-group, div.form-entry, div.question-container, div.application-question, div.form-field, div[data-automation-id*="question"], div[data-automation-id*="formField"], div.section-field, .artdeco-form__item, .jobs-easy-apply-form-element'
     );
 
     radioContainers.forEach((group) => {
@@ -419,12 +483,13 @@
 
       let targetChoice = null;
 
-      // Sponsorship Question
+      // Sponsorship Question (Checked FIRST to avoid "employment eligibility" overlap)
       if (
         questionText.includes('sponsorship') ||
-        questionText.includes('visa') ||
         questionText.includes('require sponsorship') ||
-        questionText.includes('sponsorship for employment')
+        questionText.includes('immigration-related') ||
+        questionText.includes('sponsorship for employment') ||
+        questionText.includes('require visa')
       ) {
         targetChoice = activeProfile.sponsorshipRequired || 'No';
       }
@@ -432,8 +497,10 @@
       else if (
         questionText.includes('legally authorized') ||
         questionText.includes('authorized to work') ||
+        questionText.includes('country/region you are applying') ||
         questionText.includes('right to work') ||
-        questionText.includes('lawful permanent resident')
+        questionText.includes('lawful permanent resident') ||
+        questionText.includes('legally eligible')
       ) {
         targetChoice = activeProfile.legallyAuthorized || 'Yes';
       }
@@ -520,16 +587,32 @@
       if (labelText && labelText.length > 10 && !el.value.trim()) {
         if (statusEl) statusEl.innerText = `Generating AI response for "${labelText.slice(0, 25)}..."`;
 
-        const response = await new Promise((resolve) => {
-          chrome.runtime.sendMessage(
-            {
-              action: 'GENERATE_AI_ANSWER',
-              question: labelText,
-              jobContext: document.title || 'Job Application Question'
-            },
-            resolve
-          );
+        let response = await safeSendMessage({
+          action: 'GENERATE_AI_ANSWER',
+          question: labelText,
+          jobContext: document.title || 'Job Application Question'
         });
+
+        if (!response || !response.success || !response.answer) {
+          try {
+            const directRes = await fetch('http://localhost:3000/api/candidate-profile/generate-answer', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                question: labelText,
+                jobContext: document.title || 'Job Application Question'
+              })
+            });
+            if (directRes.ok) {
+              const data = await directRes.json();
+              if (data && data.answer) {
+                response = { success: true, answer: data.answer };
+              }
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
 
         if (response && response.success && response.answer) {
           setNativeInputValue(el, response.answer);
@@ -617,6 +700,9 @@
 
     let clicked = false;
 
+    const isYes = targetLower === 'yes' || targetLower.startsWith('yes') || targetLower === 'true' || targetLower.includes('authorized') || (targetLower.includes('will require') && !targetLower.includes('not'));
+    const isNo = targetLower === 'no' || targetLower.startsWith('no') || targetLower === 'false' || targetLower.includes('will not require') || targetLower.includes('do not require');
+
     // First pass: try input labels
     radioInputs.forEach((input) => {
       let optionText = '';
@@ -636,16 +722,32 @@
 
       let isMatch = false;
 
-      if (targetLower === 'yes') {
-        if (optionLower === 'yes' || optionLower.startsWith('yes') || optionLower.includes('will require') || optionLower.includes('authorized')) {
+      if (isYes) {
+        if (
+          optionLower === 'yes' ||
+          optionLower.startsWith('yes') ||
+          optionLower.includes('authorized') ||
+          (optionLower.includes('will require') && !optionLower.includes('not'))
+        ) {
           isMatch = true;
         }
-      } else if (targetLower === 'no') {
-        if (optionLower === 'no' || optionLower.startsWith('no') || optionLower.includes('will not require') || optionLower.includes('do not require') || optionLower.includes('not a veteran')) {
+      } else if (isNo) {
+        if (
+          optionLower === 'no' ||
+          optionLower.startsWith('no') ||
+          optionLower.includes('will not require') ||
+          optionLower.includes('do not require') ||
+          optionLower.includes('not require') ||
+          optionLower.includes('no sponsorship')
+        ) {
           isMatch = true;
         }
-      } else if (optionLower.includes(targetLower) || targetLower.includes(optionLower)) {
-        isMatch = true;
+      }
+
+      if (!isMatch) {
+        if (optionLower === targetLower || (targetLower.length > 3 && optionLower.includes(targetLower)) || (optionLower.length > 3 && targetLower.includes(optionLower))) {
+          isMatch = true;
+        }
       }
 
       if (isMatch) {
@@ -661,15 +763,19 @@
 
     // Fallback: search label elements directly
     if (!clicked) {
-      const labels = container.querySelectorAll('label, button, [role="radio"]');
+      const labels = container.querySelectorAll('label, button, [role="radio"], [role="option"], .radio-label, .form-check-label');
       labels.forEach((label) => {
         const textLower = label.textContent.toLowerCase().trim();
         let isMatch = false;
 
-        if (targetLower === 'yes' && (textLower === 'yes' || textLower.startsWith('yes'))) {
-          isMatch = true;
-        } else if (targetLower === 'no' && (textLower === 'no' || textLower.startsWith('no'))) {
-          isMatch = true;
+        if (isYes) {
+          if (textLower === 'yes' || textLower.startsWith('yes') || textLower.includes('authorized')) {
+            isMatch = true;
+          }
+        } else if (isNo) {
+          if (textLower === 'no' || textLower.startsWith('no') || textLower.includes('will not require') || textLower.includes('do not require') || textLower.includes('not require')) {
+            isMatch = true;
+          }
         } else if (textLower === targetLower || (targetLower.length > 3 && textLower.includes(targetLower))) {
           isMatch = true;
         }
@@ -679,6 +785,10 @@
           clicked = true;
         }
       });
+    }
+
+    if (clicked) {
+      container.classList.add('jr-autofilled-field');
     }
 
     return clicked;
@@ -700,6 +810,21 @@
     }
 
     return input.getAttribute('aria-label') || input.placeholder || '';
+  }
+
+  // Listen for messages from extension popup
+  try {
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id && chrome.runtime.onMessage) {
+      chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+        if (request.action === 'REOPEN_PANEL' || request.action === 'SHOW_PANEL') {
+          isClosedByUser = false;
+          checkAndInjectControlPanel();
+          if (sendResponse) sendResponse({ success: true });
+        }
+      });
+    }
+  } catch (e) {
+    // Context invalidated
   }
 
   // Periodically check page state & inject panel

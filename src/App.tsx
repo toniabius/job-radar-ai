@@ -505,7 +505,7 @@ export default function App() {
   // Toggle Applied Status
   const handleToggleApplied = async (job: Job, applied: boolean, customDate?: string) => {
     const todayStr = new Date().toISOString().split('T')[0];
-    const applied_date = applied ? (customDate || job.applied_date || todayStr) : undefined;
+    const applied_date = applied ? (customDate || todayStr) : undefined;
     const updatedJob = { ...job, applied, applied_date };
     setJobs((prev) => prev.map((j) => (j.id === job.id ? updatedJob : j)));
     if (selectedJob && selectedJob.id === job.id) {

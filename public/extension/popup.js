@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
   const serverUrlInput = document.getElementById('server-url');
   const saveBtn = document.getElementById('save-server-btn');
+  const reopenBtn = document.getElementById('reopen-panel-btn');
   const candidateNameEl = document.getElementById('candidate-name');
   const candidateEmailEl = document.getElementById('candidate-email');
   const connBadge = document.getElementById('conn-badge');
@@ -21,6 +22,22 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  if (reopenBtn) {
+    reopenBtn.addEventListener('click', () => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0] && tabs[0].id) {
+          chrome.tabs.sendMessage(tabs[0].id, { action: 'REOPEN_PANEL' }, () => {
+            if (chrome.runtime.lastError) {
+              statusMsg.innerText = '⚠️ Please open a job site tab (e.g. LinkedIn)';
+            } else {
+              statusMsg.innerText = '⚡ Floating assistant re-opened!';
+            }
+          });
+        }
+      });
+    });
+  }
+
   async function testConnection(url) {
     connBadge.innerText = 'Testing...';
     connBadge.style.background = 'rgba(234, 179, 8, 0.2)';
@@ -37,16 +54,16 @@ document.addEventListener('DOMContentLoaded', () => {
       connBadge.innerText = 'Connected';
       connBadge.style.background = 'rgba(16, 185, 129, 0.2)';
       connBadge.style.color = '#34d399';
-      statusMsg.innerText = '✅ Ready! Extension active on LinkedIn Easy Apply.';
+      statusMsg.innerText = '✅ Ready!';
     } catch (err) {
       console.error('Extension popup connection error:', err);
-      candidateNameEl.innerText = 'Cannot connect to Job Radar';
+      candidateNameEl.innerText = 'Cannot connect to Apply Assistant';
       candidateEmailEl.innerText = 'Check server URL & ensure app is running';
 
       connBadge.innerText = 'Offline';
       connBadge.style.background = 'rgba(239, 68, 68, 0.2)';
       connBadge.style.color = '#fca5a5';
-      statusMsg.innerText = '❌ Failed to connect to Job Radar app.';
+      statusMsg.innerText = '❌ Failed to connect to Apply Assistant app.';
     }
   }
 });

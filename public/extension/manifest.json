@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Job Radar LinkedIn AutoFill & AI Review",
+  "name": "Apply Assistant AutoFill & AI Review",
   "version": "1.0.0",
-  "description": "Smart 1-Click AutoFill for LinkedIn Easy Apply with Gemini AI question answering and page-by-page human review.",
+  "description": "Smart 1-Click AutoFill for Job Applications with Gemini AI question answering.",
   "permissions": [
     "activeTab",
     "storage",
@@ -15,7 +15,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Job Radar Assistant"
+    "default_title": "Apply Assistant"
   },
   "background": {
     "service_worker": "background.js"

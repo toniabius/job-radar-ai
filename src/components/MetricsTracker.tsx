@@ -165,8 +165,8 @@ export const MetricsTracker: React.FC<MetricsTrackerProps> = ({
           </div>
         </div>
 
-        {/* 4 Core KPI Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Core KPI Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {/* 1. Today's Velocity */}
           <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
             <div className="flex items-center justify-between text-xs text-slate-400">
@@ -224,23 +224,6 @@ export const MetricsTracker: React.FC<MetricsTrackerProps> = ({
               <span className="text-xs font-semibold text-indigo-400">{last7DaysAvg} / day</span>
             </div>
             <p className="text-[10px] text-slate-500">Weekly submission average rate</p>
-          </div>
-
-          {/* 4. Strong Match Conversion Rate */}
-          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <span className="font-semibold uppercase tracking-wider text-[10px]">Strong Match Conversion</span>
-              <Sparkles className="w-4 h-4 text-emerald-400" />
-            </div>
-            <div className="flex items-baseline justify-between">
-              <div className="text-2xl font-extrabold text-emerald-400">
-                {strongMatchConversionRate}%
-              </div>
-              <span className="text-xs text-slate-400">
-                {strongMatchesAppliedCount} / {strongMatchJobs.length}
-              </span>
-            </div>
-            <p className="text-[10px] text-slate-500">High match (≥{minimumScoreThreshold}) roles applied</p>
           </div>
         </div>
       </div>

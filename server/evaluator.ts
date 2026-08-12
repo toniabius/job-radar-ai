@@ -530,6 +530,26 @@ export function detectHardBlockerViolation(job: Job, hardBlockersText?: string):
         };
       }
     }
+
+    // Rule 10: Machine Learning Engineer roles
+    if (
+      normLine.includes("machine learning") ||
+      normLine.includes("ml engineer") ||
+      normLine.includes("mle")
+    ) {
+      if (
+        titleLower.includes("machine learning engineer") ||
+        titleLower.includes("ml engineer") ||
+        titleLower.includes("mle") ||
+        titleLower.includes("machine learning researcher") ||
+        titleLower.includes("applied scientist")
+      ) {
+        return {
+          isBlocked: true,
+          reason: `Hard Blocker Triggered: Machine Learning Engineer role ("${line}")`
+        };
+      }
+    }
   }
 
   return { isBlocked: false, reason: "" };

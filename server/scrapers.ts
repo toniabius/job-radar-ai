@@ -61,7 +61,8 @@ export async function fetchLiveLinkedInJobs(
   ignoredCompanies: string[] = [],
   isCancelled?: () => boolean,
   isStopFetching?: () => boolean,
-  addLog?: (stage: "SCANNER" | "CONFIG" | "RESUME" | "NORMALIZER" | "GEMINI_AI" | "REPORT" | "SUCCESS" | "ERROR", message: string, details?: string) => void
+  addLog?: (stage: "SCANNER" | "CONFIG" | "RESUME" | "NORMALIZER" | "GEMINI_AI" | "REPORT" | "SUCCESS" | "ERROR", message: string, details?: string) => void,
+  onBatchFetched?: (batchJobs: Omit<Job, 'id'>[]) => Promise<void>
 ): Promise<{ jobs: Omit<Job, 'id'>[]; totalScanned: number }> {
   const tprMap: Record<string, string> = { past_24h: "r86400", past_week: "r604800", past_month: "r2592000" };
   const tpr = tprMap[timeFilter] || (typeof timeFilter === "string" && timeFilter.startsWith("r") ? timeFilter : "r86400");
@@ -315,11 +316,13 @@ export async function fetchLiveLinkedInJobs(
 
               const batchSalaries = await batchDetermineJobSalaries(salaryInputs);
 
+              const pageBatchJobs: Omit<Job, 'id'>[] = [];
+
               for (let i = 0; i < fetchedCardsData.length; i++) {
                 const { card, fullDescription } = fetchedCardsData[i];
                 const foundSalary = batchSalaries[i] || "$Not found";
 
-                results.push({
+                const jobObj = {
                   company: card.rawComp,
                   title: card.jobTitle,
                   location: card.jobLoc,
@@ -329,10 +332,20 @@ export async function fetchLiveLinkedInJobs(
                   employment_type: "Full-time",
                   department: "Engineering",
                   salary: foundSalary,
-                  provider: "LinkedIn",
+                  provider: "LinkedIn" as const,
                   first_seen: new Date().toISOString(),
-                  status: "new"
-                });
+                  status: "new" as const
+                };
+
+                results.push(jobObj);
+                pageBatchJobs.push(jobObj);
+              }
+
+              if (onBatchFetched && pageBatchJobs.length > 0) {
+                if (addLog) {
+                  addLog("SCANNER", `[BATCH FETCHED] Retrieved ${pageBatchJobs.length} posting(s). Triggering immediate evaluation & persistence...`);
+                }
+                await onBatchFetched(pageBatchJobs);
               }
             }
 

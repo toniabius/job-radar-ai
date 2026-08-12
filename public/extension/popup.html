@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Job Radar Assistant</title>
+  <title>Apply Assistant</title>
   <style>
     body {
       width: 320px;
@@ -95,7 +95,7 @@
 </head>
 <body>
   <div class="header">
-    <div class="title">⚡ Job Radar Assistant</div>
+    <div class="title">⚡ Apply Assistant</div>
     <span class="badge" id="conn-badge">Connecting...</span>
   </div>
 
@@ -106,14 +106,15 @@
   </div>
 
   <div class="card">
-    <div class="label">Job Radar Server Endpoint</div>
+    <div class="label">Apply Assistant Server Endpoint</div>
     <div class="input-group">
       <input type="text" id="server-url" value="http://localhost:3000" />
     </div>
     <button class="btn" id="save-server-btn">Save Server URL</button>
+    <button class="btn" id="reopen-panel-btn" style="background: #2563eb; margin-top: 6px;">⚡ Show Floating Assistant</button>
   </div>
 
-  <div class="status" id="status-msg">Open LinkedIn Easy Apply modal to auto-fill!</div>
+  <div class="status" id="status-msg">Open any job application to auto-fill!</div>
 
   <script src="popup.js"></script>
 </body>
