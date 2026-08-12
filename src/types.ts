@@ -9,6 +9,7 @@ export interface Job {
   employment_type: string; // Full-time, Contract, Remote, Hybrid, etc.
   department?: string;
   salary?: string;
+  company_size?: string;
   provider: 'LinkedIn';
   first_seen: string;
   processed_at?: string;
@@ -61,6 +62,7 @@ export interface AppConfig {
   auto_evaluate: boolean;
   gemini_model?: string;
   max_jobs_per_company: number;
+  min_company_size?: number;
   hard_blockers?: string;
 }
 

@@ -1,6 +1,6 @@
 import { Job } from "../src/types.js";
 import { getLinkedInLocationParams, isLocationMatch } from "./utils.js";
-import { batchDetermineJobSalaries } from "./evaluator.js";
+import { batchDetermineJobSalaries, extractCompanyEmployeeCount } from "./evaluator.js";
 
 let lastLinkedInReqTime = 0;
 
@@ -62,7 +62,8 @@ export async function fetchLiveLinkedInJobs(
   isCancelled?: () => boolean,
   isStopFetching?: () => boolean,
   addLog?: (stage: "SCANNER" | "CONFIG" | "RESUME" | "NORMALIZER" | "GEMINI_AI" | "REPORT" | "SUCCESS" | "ERROR", message: string, details?: string) => void,
-  onBatchFetched?: (batchJobs: Omit<Job, 'id'>[]) => Promise<void>
+  onBatchFetched?: (batchJobs: Omit<Job, 'id'>[]) => Promise<void>,
+  minCompanySize?: number
 ): Promise<{ jobs: Omit<Job, 'id'>[]; totalScanned: number }> {
   const tprMap: Record<string, string> = { past_24h: "r86400", past_week: "r604800", past_month: "r2592000" };
   const tpr = tprMap[timeFilter] || (typeof timeFilter === "string" && timeFilter.startsWith("r") ? timeFilter : "r86400");
@@ -244,6 +245,7 @@ export async function fetchLiveLinkedInJobs(
               card: typeof validCards[0];
               fullDescription: string;
               rawHtml: string;
+              companySizeStr?: string;
             }> = [];
 
             for (let cardIdx = 0; cardIdx < validCards.length; cardIdx++) {
@@ -304,7 +306,15 @@ export async function fetchLiveLinkedInJobs(
                 continue;
               }
 
-              fetchedCardsData.push({ card, fullDescription, rawHtml });
+              const parsedSize = extractCompanyEmployeeCount(rawHtml || fullDescription);
+              if (minCompanySize && minCompanySize > 0 && parsedSize && parsedSize.max < minCompanySize) {
+                if (addLog) {
+                  addLog("SCANNER", `Strictly ignored "${card.jobTitle}" @ ${card.rawComp}: Company size (${parsedSize.text}) is below minimum target of ${minCompanySize} employees.`);
+                }
+                continue;
+              }
+
+              fetchedCardsData.push({ card, fullDescription, rawHtml, companySizeStr: parsedSize?.text });
             }
 
             if (fetchedCardsData.length > 0) {
@@ -319,7 +329,7 @@ export async function fetchLiveLinkedInJobs(
               const pageBatchJobs: Omit<Job, 'id'>[] = [];
 
               for (let i = 0; i < fetchedCardsData.length; i++) {
-                const { card, fullDescription } = fetchedCardsData[i];
+                const { card, fullDescription, companySizeStr } = fetchedCardsData[i];
                 const foundSalary = batchSalaries[i] || "$Not found";
 
                 const jobObj = {
@@ -332,6 +342,7 @@ export async function fetchLiveLinkedInJobs(
                   employment_type: "Full-time",
                   department: "Engineering",
                   salary: foundSalary,
+                  company_size: companySizeStr,
                   provider: "LinkedIn" as const,
                   first_seen: new Date().toISOString(),
                   status: "new" as const

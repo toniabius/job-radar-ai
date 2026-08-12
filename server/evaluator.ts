@@ -274,7 +274,46 @@ export function sanitizeJobEvaluation(job: Job, preferredLocations: string[], co
   };
 }
 
-export function detectHardBlockerViolation(job: Job, hardBlockersText?: string): { isBlocked: boolean; reason: string } {
+export function extractCompanyEmployeeCount(text: string): { min: number; max: number; text: string } | null {
+  if (!text) return null;
+
+  // 1. Plus patterns e.g. "10,001+ employees", "10000+ employees", "500+ employees"
+  const plusMatch = text.match(/(\d{1,3}(?:,\d{3})*|\d+)\s*\+\s*employees?/i);
+  if (plusMatch) {
+    const minVal = parseInt(plusMatch[1].replace(/,/g, ""), 10);
+    return { min: minVal, max: Infinity, text: plusMatch[0] };
+  }
+
+  // 2. Range patterns e.g. "501-1,000 employees", "51-200 employees", "1,000-5,000 employees", "10-50 employees"
+  const rangeMatch = text.match(/(\d{1,3}(?:,\d{3})*|\d+)\s*[-–—]\s*(\d{1,3}(?:,\d{3})*|\d+)\s*employees?/i);
+  if (rangeMatch) {
+    const minVal = parseInt(rangeMatch[1].replace(/,/g, ""), 10);
+    const maxVal = parseInt(rangeMatch[2].replace(/,/g, ""), 10);
+    return { min: minVal, max: maxVal, text: rangeMatch[0] };
+  }
+
+  // 3. Size patterns e.g. "company size: 250 employees", "headcount: 50-100"
+  const sizeMatch = text.match(/(?:company\s+size|headcount|employees?)[\s:]+(\d{1,3}(?:,\d{3})*|\d+)\s*(?:[-–—]\s*(\d{1,3}(?:,\d{3})*|\d+))?\s*(?:employees?)?/i);
+  if (sizeMatch) {
+    const minVal = parseInt(sizeMatch[1].replace(/,/g, ""), 10);
+    const maxVal = sizeMatch[2] ? parseInt(sizeMatch[2].replace(/,/g, ""), 10) : minVal;
+    return { min: minVal, max: maxVal, text: sizeMatch[0] };
+  }
+
+  return null;
+}
+
+export function detectHardBlockerViolation(job: Job, hardBlockersText?: string, minCompanySize?: number): { isBlocked: boolean; reason: string } {
+  if (minCompanySize && minCompanySize > 0) {
+    const sizeSource = `${job.company_size || ''} ${job.description || ''}`;
+    const parsedSize = extractCompanyEmployeeCount(sizeSource);
+    if (parsedSize && parsedSize.max < minCompanySize) {
+      return {
+        isBlocked: true,
+        reason: `Hard Blocker Triggered: Company size ("${parsedSize.text}") is strictly below minimum target of ${minCompanySize} employees`
+      };
+    }
+  }
   const rawJobText = `${job.title} ${job.company} ${job.description || ''} ${job.department || ''}`.toLowerCase();
   const normJobText = rawJobText.replace(/u\.s\./g, "us").replace(/u\.s/g, "us");
 
@@ -652,7 +691,7 @@ export function generateHeuristicEvaluation(job: Job, resume: ResumeData, config
     overQualNote = `Over-Qualification: Candidate has ~${candidateYoe} years experience, but position is targeted at New Graduates / Early Career / Entry-Level applicants`;
   }
 
-  const hardBlockerCheck = detectHardBlockerViolation(job, config?.hard_blockers);
+  const hardBlockerCheck = detectHardBlockerViolation(job, config?.hard_blockers, config?.min_company_size);
   let hardBlockerPenalty = 0;
   let hardBlockerNote = "";
   if (hardBlockerCheck.isBlocked) {
@@ -933,6 +972,7 @@ EVALUATION RULES & CRITERIA:
 ${configObj.hard_blockers || "U.S. Citizenship requirement, Security Clearance, Contractor / 1099, Pure Frontend"}
 3. Target Minimum Salary: $${(configObj.min_salary || 0).toLocaleString()}
 4. Preferred Locations: ${configObj.locations?.join(", ") || "Any"}
+5. Target Minimum Company Size: ${configObj.min_company_size ? `${configObj.min_company_size.toLocaleString()} employees` : "No limit"}
 
 JOB POSTINGS TO EVALUATE:
 ${promptJobsText}
@@ -1023,7 +1063,7 @@ Instructions:
             const job = chunk[cIdx];
             const evalObj = parsedArray.find((p) => p.jobId === job.id) || parsedArray[cIdx] || {};
 
-            const hbCheck = detectHardBlockerViolation(job, configObj.hard_blockers);
+            const hbCheck = detectHardBlockerViolation(job, configObj.hard_blockers, configObj.min_company_size);
             if (hbCheck.isBlocked) {
               evalObj.score = Math.min(evalObj.score || 15, 15);
               evalObj.match_level = 'Unmatched';

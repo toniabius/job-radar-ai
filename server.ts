@@ -581,6 +581,95 @@ app.post("/api/candidate-profile/ai-parse", async (req, res) => {
   }
 });
 
+// Endpoint to fetch LinkedIn Company Page & Company Size from a Job URL
+app.post("/api/company-info", async (req, res) => {
+  try {
+    const { url } = req.body || {};
+    if (!url || typeof url !== "string") {
+      return res.status(400).json({ error: "Job URL or LinkedIn link required" });
+    }
+
+    const headers = {
+      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Accept-Language": "en-US,en;q=0.9"
+    };
+
+    const fetchRes = await fetch(url.trim(), { headers });
+    if (!fetchRes.ok) {
+      return res.status(fetchRes.status).json({ error: `Failed to fetch URL: HTTP ${fetchRes.status}` });
+    }
+
+    const html = await fetchRes.text();
+
+    let companyName = "";
+    let companyUrl = "";
+    let companySize = "";
+
+    // 1. Extract JSON-LD metadata
+    const jsonLdMatches = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/gi);
+    if (jsonLdMatches) {
+      for (const match of jsonLdMatches) {
+        try {
+          const content = match.replace(/<script[^>]*>/i, "").replace(/<\/script>/i, "").trim();
+          const data = JSON.parse(content);
+          if (data["@type"] === "JobPosting" && data.hiringOrganization) {
+            companyName = data.hiringOrganization.name || "";
+            companyUrl = data.hiringOrganization.sameAs || data.hiringOrganization.url || "";
+            if (data.hiringOrganization.numberOfEmployees) {
+              const emp = data.hiringOrganization.numberOfEmployees;
+              companySize = typeof emp === "object" ? `${emp.minValue || ""}-${emp.maxValue || ""}` : String(emp);
+            }
+          }
+        } catch (e) {
+          // ignore json parse errors
+        }
+      }
+    }
+
+    // 2. Regex fallback for company page link & employee size
+    if (!companyUrl) {
+      const companyUrlMatch = html.match(/https:\/\/[a-z]{2,3}\.linkedin\.com\/company\/[a-zA-Z0-9_-]+/i);
+      if (companyUrlMatch) {
+        companyUrl = companyUrlMatch[0];
+      }
+    }
+
+    if (!companySize) {
+      const sizeMatch = html.match(/(\d{1,3}(?:,\d{3})*\s*-\s*\d{1,3}(?:,\d{3})*|\d{1,3}(?:,\d{3})*\+?)\s+employees?/i);
+      if (sizeMatch) {
+        companySize = sizeMatch[0];
+      }
+    }
+
+    // 3. Fetch company page if size still missing
+    if (companyUrl && !companySize) {
+      try {
+        const compRes = await fetch(companyUrl, { headers });
+        if (compRes.ok) {
+          const compHtml = await compRes.text();
+          const compSizeMatch = compHtml.match(/(\d{1,3}(?:,\d{3})*\s*-\s*\d{1,3}(?:,\d{3})*|\d{1,3}(?:,\d{3})*\+?)\s+employees?/i);
+          if (compSizeMatch) {
+            companySize = compSizeMatch[0];
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    res.json({
+      success: true,
+      companyName,
+      companyUrl,
+      companySize: companySize || "Unknown (Requires LinkedIn authentication to view full employee count)",
+      sourceUrl: url
+    });
+  } catch (err: any) {
+    console.error("Company info lookup error:", err);
+    res.status(500).json({ error: err.message || "Failed to lookup company info" });
+  }
+});
+
 // 3. Jobs DB Endpoints
 app.get("/api/jobs", (req, res) => {
   const jobs = loadJobsDB();

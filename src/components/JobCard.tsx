@@ -57,13 +57,10 @@ export const JobCard: React.FC<JobCardProps> = ({
   return (
     <div className="bg-white rounded-xl border border-slate-200/80 p-5 hover:shadow-md hover:border-slate-300 transition-all flex flex-col justify-between group">
       <div>
-        {/* Top Header: Company, Provider Badge, Score */}
+        {/* Top Header: Company, Score */}
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex items-center space-x-2 flex-wrap gap-y-1 min-w-0">
-            <span className="font-bold text-slate-900 text-sm tracking-tight truncate max-w-[160px]">{job.company}</span>
-            <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${getProviderColor(job.provider)}`}>
-              {job.provider}
-            </span>
+            <span className="font-bold text-slate-900 text-sm tracking-tight truncate max-w-[180px]">{job.company}</span>
             {job.status === 'new' && (
               <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500 text-white uppercase tracking-wider">
                 New

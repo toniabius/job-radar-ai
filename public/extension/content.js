@@ -3,13 +3,27 @@
   console.log('⚡ Job Radar Universal AutoFill Active');
 
   let activeProfile = null;
-  let isMinimized = false;
+  let isMinimized = true;
   let isClosedByUser = false;
   let isDragging = false;
   let dragOffsetX = 0;
   let dragOffsetY = 0;
 
   let isContextInvalidated = false;
+  let lastFocusedElement = null;
+
+  document.addEventListener('focusin', (e) => {
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) {
+      lastFocusedElement = e.target;
+    }
+  }, true);
+
+  document.addEventListener('click', (e) => {
+    const inputEl = e.target.closest('input, textarea, [contenteditable="true"]');
+    if (inputEl) {
+      lastFocusedElement = inputEl;
+    }
+  }, true);
 
   // Safe wrapper for chrome.runtime.sendMessage to handle extension updates/context invalidation
   function safeSendMessage(message) {
@@ -111,6 +125,9 @@
 
     const panel = document.createElement('div');
     panel.id = 'jr-autofill-panel';
+    if (isMinimized) {
+      panel.classList.add('jr-minimized');
+    }
     panel.innerHTML = `
       <div class="jr-header" id="jr-panel-header">
         <div class="jr-title">
@@ -118,7 +135,7 @@
         </div>
         <div class="jr-header-actions">
           <span id="jr-detection-badge" class="jr-badge jr-badge-waiting">🔵 Active</span>
-          <button id="jr-btn-toggle-min" class="jr-icon-btn" title="Minimize / Expand Panel">_</button>
+          <button id="jr-btn-toggle-min" class="jr-icon-btn" title="${isMinimized ? 'Expand Apply Assistant' : 'Minimize / Expand Panel'}">${isMinimized ? '+' : '_'}</button>
           <button id="jr-btn-close" class="jr-icon-btn" title="Close Extension Panel">✕</button>
         </div>
       </div>
@@ -504,6 +521,14 @@
       ) {
         targetChoice = activeProfile.legallyAuthorized || 'Yes';
       }
+      // Transgender / Gender Identity Question
+      else if (questionText.includes('transgender') || questionText.includes('gender identity')) {
+        targetChoice = activeProfile.transgenderStatus || 'Decline to self-identify';
+      }
+      // Sexual Orientation Question
+      else if (questionText.includes('sexual orientation') || questionText.includes('sexual identity') || questionText.includes('lgbtq')) {
+        targetChoice = activeProfile.sexualOrientation || 'Decline to self-identify';
+      }
       // Gender Question
       else if (questionText.includes('gender') || questionText.includes('sex identity')) {
         targetChoice = activeProfile.gender || 'Decline to self-identify';
@@ -571,68 +596,81 @@
     }
   }
 
-  // Answer open text questions with AI
+  // Answer open text question with AI for the single highlighted/focused cell
   async function handleAnswerOpenQuestions() {
     const statusEl = document.getElementById('jr-status-text');
-    const container = document.querySelector(
-      '.jobs-easy-apply-modal, .jobs-easy-apply-content, div[role="dialog"], .jobs-apply-form, [data-test-modal], form'
-    ) || document.body;
 
-    const textareas = container.querySelectorAll('textarea, input[type="text"]');
+    // Identify active / focused / highlighted element
+    let el = document.activeElement;
+    if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA' && !el.isContentEditable)) {
+      el = lastFocusedElement;
+    }
 
-    let aiCount = 0;
+    if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA' && !el.isContentEditable)) {
+      if (statusEl) {
+        statusEl.innerText = `👉 Please click inside or highlight a question box first!`;
+      }
+      return;
+    }
 
-    for (const el of Array.from(textareas)) {
-      const labelText = getLabelForInput(el);
-      if (labelText && labelText.length > 10 && !el.value.trim()) {
-        if (statusEl) statusEl.innerText = `Generating AI response for "${labelText.slice(0, 25)}..."`;
+    const labelText = getLabelForInput(el) || el.getAttribute('aria-label') || el.placeholder || 'Job Application Question';
 
-        let response = await safeSendMessage({
-          action: 'GENERATE_AI_ANSWER',
-          question: labelText,
-          jobContext: document.title || 'Job Application Question'
+    if (statusEl) statusEl.innerText = `Generating AI response for "${labelText.slice(0, 25)}..."`;
+
+    let response = await safeSendMessage({
+      action: 'GENERATE_AI_ANSWER',
+      question: labelText,
+      jobContext: document.title || 'Job Application Question'
+    });
+
+    if (!response || !response.success || !response.answer) {
+      try {
+        const directRes = await fetch('http://localhost:3000/api/candidate-profile/generate-answer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: labelText,
+            jobContext: document.title || 'Job Application Question'
+          })
         });
-
-        if (!response || !response.success || !response.answer) {
-          try {
-            const directRes = await fetch('http://localhost:3000/api/candidate-profile/generate-answer', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                question: labelText,
-                jobContext: document.title || 'Job Application Question'
-              })
-            });
-            if (directRes.ok) {
-              const data = await directRes.json();
-              if (data && data.answer) {
-                response = { success: true, answer: data.answer };
-              }
-            }
-          } catch (e) {
-            // ignore
+        if (directRes.ok) {
+          const data = await directRes.json();
+          if (data && data.answer) {
+            response = { success: true, answer: data.answer };
           }
         }
-
-        if (response && response.success && response.answer) {
-          setNativeInputValue(el, response.answer);
-          el.classList.add('jr-autofilled-field');
-          aiCount++;
-        }
+      } catch (e) {
+        // ignore
       }
     }
 
-    if (statusEl) {
-      if (aiCount > 0) {
-        statusEl.innerText = `✨ Generated ${aiCount} AI responses. Please review!`;
-      } else {
-        statusEl.innerText = `ℹ️ No unanswered long-form questions found.`;
+    if (response && response.success && response.answer) {
+      setNativeInputValue(el, response.answer);
+      el.classList.add('jr-autofilled-field');
+      if (statusEl) {
+        statusEl.innerText = `✨ Generated AI answer for current field!`;
+      }
+    } else {
+      if (statusEl) {
+        statusEl.innerText = `⚠️ Could not generate answer. Please try again.`;
       }
     }
   }
 
   // Set input value & trigger native framework events (React, Vue, Angular)
   function setNativeInputValue(element, value) {
+    if (!element) return;
+
+    try {
+      element.focus();
+    } catch (e) {}
+
+    // Reset React internal _valueTracker if present so React registers native change
+    const tracker = element._valueTracker;
+    if (tracker) {
+      tracker.setValue(element.value || '');
+    }
+
     const valueSetter = Object.getOwnPropertyDescriptor(element, 'value')?.set;
     const prototype = Object.getPrototypeOf(element);
     const prototypeValueSetter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
@@ -645,15 +683,29 @@
       element.value = value;
     }
 
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    element.dispatchEvent(new Event('change', { bubbles: true }));
+    // Fire full suite of native events for form validation frameworks
+    element.dispatchEvent(new Event('focus', { bubbles: true }));
+    element.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'a' }));
+    element.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, cancelable: true, key: 'a' }));
+    element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true, inputType: 'insertText' }));
+    element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'a' }));
+    element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
     element.dispatchEvent(new Event('blur', { bubbles: true }));
+
+    try {
+      element.blur();
+    } catch (e) {}
   }
 
-  // Fill HTML <select> options
+  // Fill HTML <select> options & trigger completion events
   function fillSelectOption(selectEl, targetValue) {
+    if (!selectEl) return false;
     const targetLower = targetValue.toLowerCase().trim();
     let bestIndex = -1;
+
+    try {
+      selectEl.focus();
+    } catch (e) {}
 
     for (let i = 0; i < selectEl.options.length; i++) {
       const optText = (selectEl.options[i].text || '').toLowerCase().trim();
@@ -671,15 +723,25 @@
         bestIndex = i;
         break;
       }
-      if (optText.includes(targetLower) || optVal.includes(targetLower)) {
+      if (optText.includes(targetLower) || optVal.includes(targetLower) || (targetLower.length > 4 && targetLower.includes(optText))) {
         bestIndex = i;
       }
     }
 
     if (bestIndex !== -1) {
+      const tracker = selectEl._valueTracker;
+      if (tracker) tracker.setValue(selectEl.value || '');
+
       selectEl.selectedIndex = bestIndex;
-      selectEl.dispatchEvent(new Event('change', { bubbles: true }));
-      selectEl.dispatchEvent(new Event('input', { bubbles: true }));
+      selectEl.dispatchEvent(new Event('focus', { bubbles: true }));
+      selectEl.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+      selectEl.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+      selectEl.dispatchEvent(new Event('blur', { bubbles: true }));
+
+      try {
+        selectEl.blur();
+      } catch (e) {}
+
       selectEl.classList.add('jr-autofilled-field');
       return true;
     }
