@@ -6,13 +6,45 @@ document.addEventListener('DOMContentLoaded', () => {
   const candidateEmailEl = document.getElementById('candidate-email');
   const connBadge = document.getElementById('conn-badge');
   const statusMsg = document.getElementById('status-msg');
+  const extToggle = document.getElementById('extension-toggle');
+  const extStatusLabel = document.getElementById('ext-status-label');
 
-  // Load saved server URL
-  chrome.storage.local.get(['serverUrl'], (result) => {
+  function updateExtToggleUI(enabled) {
+    if (extToggle) extToggle.checked = enabled;
+    if (extStatusLabel) {
+      if (enabled) {
+        extStatusLabel.innerText = 'Enabled';
+        extStatusLabel.style.color = '#34d399';
+      } else {
+        extStatusLabel.innerText = 'Disabled';
+        extStatusLabel.style.color = '#f87171';
+      }
+    }
+  }
+
+  // Load saved extension state & server URL
+  chrome.storage.local.get(['serverUrl', 'extensionEnabled'], (result) => {
     const url = result.serverUrl || 'http://localhost:3000';
     serverUrlInput.value = url;
+    const enabled = result.extensionEnabled !== false;
+    updateExtToggleUI(enabled);
     testConnection(url);
   });
+
+  if (extToggle) {
+    extToggle.addEventListener('change', () => {
+      const isEnabled = extToggle.checked;
+      updateExtToggleUI(isEnabled);
+      chrome.storage.local.set({ extensionEnabled: isEnabled }, () => {
+        statusMsg.innerText = isEnabled ? 'Extension AutoFill Enabled!' : 'Extension AutoFill Disabled.';
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          if (tabs[0] && tabs[0].id) {
+            chrome.tabs.sendMessage(tabs[0].id, { action: 'UPDATE_EXTENSION_STATE', enabled: isEnabled });
+          }
+        });
+      });
+    });
+  }
 
   saveBtn.addEventListener('click', () => {
     const newUrl = serverUrlInput.value.trim().replace(/\/+$/, '');

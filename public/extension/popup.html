@@ -91,12 +91,64 @@
       text-align: center;
       margin-top: 8px;
     }
+    /* Toggle switch CSS */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 22px;
+    }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #334155;
+      transition: .3s;
+      border-radius: 22px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .3s;
+      border-radius: 50%;
+    }
+    input:checked + .slider {
+      background-color: #10b981;
+    }
+    input:checked + .slider:before {
+      transform: translateX(22px);
+    }
   </style>
 </head>
 <body>
   <div class="header">
     <div class="title">⚡ Apply Assistant</div>
     <span class="badge" id="conn-badge">Connecting...</span>
+  </div>
+
+  <!-- Enable / Disable Extension Control Card -->
+  <div class="card" style="display: flex; align-items: center; justify-content: space-between;">
+    <div>
+      <div class="label">Extension Status</div>
+      <div class="value" id="ext-status-label" style="color: #34d399;">Enabled</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="extension-toggle" checked>
+      <span class="slider"></span>
+    </label>
   </div>
 
   <div class="card">

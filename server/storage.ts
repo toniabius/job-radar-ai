@@ -44,6 +44,7 @@ export function getDefaultCandidateProfile(): CandidateProfile {
     disabilityStatus: "No, I do not have a disability",
     knowledgeBase: [],
     customFields: [],
+    extensionEnabled: true,
     workExperience: [
       {
         id: "exp-1",

@@ -189,11 +189,9 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
                     : mode === 'reeval' ? 'Re-Evaluation Done' : 'Scan Complete'}
                 </h4>
                 <p className="text-[10px] text-slate-400 truncate">
-                  {evalProgress
-                    ? `Evaluating ${evalProgress.current}/${evalProgress.total} (${evalProgress.percent}%)`
-                    : isRunning
-                    ? (mode === 'reeval' ? 'AI processing...' : 'Fetching postings...')
-                    : (scanResult ? `Found ${scanResult.newJobsCount ?? 0} new jobs` : 'Ready')}
+                  {isRunning
+                    ? (mode === 'reeval' ? 'AI processing match scores...' : 'Fetching & processing job postings...')
+                    : (scanResult ? `Found ${scanResult.newJobsCount ?? 0} new jobs` : 'Complete')}
                 </p>
               </div>
             </div>
@@ -230,23 +228,6 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
             </div>
           </div>
 
-          {/* Minimized Progress Bar */}
-          {isRunning && evalProgress && (
-            <div className="space-y-1">
-              <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                <div
-                  className="bg-emerald-400 h-1.5 rounded-full transition-all duration-300"
-                  style={{ width: `${evalProgress.percent}%` }}
-                />
-              </div>
-              {evalProgress.currentRole && (
-                <p className="text-[10px] font-mono text-slate-300 truncate">
-                  {evalProgress.currentRole}
-                </p>
-              )}
-            </div>
-          )}
-
           {/* Minimized Actions */}
           {isRunning && (
             <div className="flex items-center justify-between pt-1 border-t border-slate-800/80 text-[11px]">
@@ -262,7 +243,7 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
                 </button>
               ) : (
                 <span className="text-slate-400 font-mono text-[10px]">
-                  {evalProgress ? `AI Batch ${evalProgress.current}/${evalProgress.total}` : 'Scanning...'}
+                  Scanning...
                 </span>
               )}
 

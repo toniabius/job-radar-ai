@@ -1819,6 +1819,59 @@ export const CandidateProfileEditor: React.FC<CandidateProfileEditorProps> = ({
       {/* TAB CONTENT 4: BOOKMARKLET & CHROME EXTENSION INSTALLATION */}
       {activeTab === 'bookmarklet' && (
         <div className="p-6 space-y-6">
+          {/* Extension Status & Toggle Card */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 text-white flex flex-wrap items-center justify-between gap-4 shadow-md">
+            <div className="flex items-center space-x-3">
+              <span className={`p-3 rounded-xl border ${
+                profile?.extensionEnabled !== false
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                  : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+              }`}>
+                <Terminal className="w-6 h-6" />
+              </span>
+              <div>
+                <div className="flex items-center space-x-2">
+                  <h3 className="font-bold text-base">Chrome Extension AutoFill Integration</h3>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
+                    profile?.extensionEnabled !== false
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                      : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                  }`}>
+                    {profile?.extensionEnabled !== false ? '● ACTIVE / ENABLED' : '○ DISABLED'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Controls whether the floating AutoFill widget automatically injects on LinkedIn, Workday, Greenhouse, & job portals.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-3 bg-slate-950 px-3 py-2 rounded-xl border border-slate-800">
+              <span className="text-xs font-semibold text-slate-300">
+                {profile?.extensionEnabled !== false ? 'Extension Enabled' : 'Extension Disabled'}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!profile) return;
+                  const updated = { ...profile, extensionEnabled: profile.extensionEnabled === false ? true : false };
+                  setProfile(updated);
+                  onSaveCandidateProfile(updated);
+                }}
+                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  profile?.extensionEnabled !== false ? 'bg-emerald-600' : 'bg-slate-700'
+                }`}
+                title="Toggle Chrome Extension AutoFill Integration"
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    profile?.extensionEnabled !== false ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+
           {/* Chrome Extension Package Card */}
           <div className="bg-slate-900 text-slate-100 p-6 rounded-2xl border border-slate-800 space-y-4 shadow-md">
             <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">

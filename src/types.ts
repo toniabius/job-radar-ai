@@ -132,6 +132,7 @@ export interface CandidateProfile {
   knowledgeBase: KnowledgeEntry[];
   customFields?: CustomContactField[];
   workExperience?: WorkExperienceEntry[];
+  extensionEnabled?: boolean;
 }
 
 export interface UserProfile {

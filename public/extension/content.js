@@ -3,6 +3,7 @@
   console.log('⚡ Job Radar Universal AutoFill Active');
 
   let activeProfile = null;
+  let isExtensionEnabled = true;
   let isMinimized = true;
   let isClosedByUser = false;
   let isDragging = false;
@@ -93,10 +94,39 @@
   // Inject floating control panel
   function checkAndInjectControlPanel() {
     if (isClosedByUser) return;
-    if (!document.getElementById('jr-autofill-panel')) {
-      injectControlPanel();
+
+    if (!isExtensionEnabled) {
+      const existing = document.getElementById('jr-autofill-panel');
+      if (existing) existing.remove();
+      return;
     }
-    updateDetectionState();
+
+    if (activeProfile && activeProfile.extensionEnabled === false) {
+      const existing = document.getElementById('jr-autofill-panel');
+      if (existing) existing.remove();
+      return;
+    }
+
+    // Check storage for local override toggle
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.get(['extensionEnabled'], (res) => {
+        if (res.extensionEnabled === false) {
+          isExtensionEnabled = false;
+          const existing = document.getElementById('jr-autofill-panel');
+          if (existing) existing.remove();
+          return;
+        }
+        if (!document.getElementById('jr-autofill-panel')) {
+          injectControlPanel();
+        }
+        updateDetectionState();
+      });
+    } else {
+      if (!document.getElementById('jr-autofill-panel')) {
+        injectControlPanel();
+      }
+      updateDetectionState();
+    }
   }
 
   function updateDetectionState() {
@@ -922,8 +952,19 @@
   try {
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id && chrome.runtime.onMessage) {
       chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-        if (request.action === 'REOPEN_PANEL' || request.action === 'SHOW_PANEL') {
+        if (request.action === 'UPDATE_EXTENSION_STATE') {
+          isExtensionEnabled = request.enabled !== false;
+          if (!isExtensionEnabled) {
+            const existing = document.getElementById('jr-autofill-panel');
+            if (existing) existing.remove();
+          } else {
+            isClosedByUser = false;
+            checkAndInjectControlPanel();
+          }
+          if (sendResponse) sendResponse({ success: true });
+        } else if (request.action === 'REOPEN_PANEL' || request.action === 'SHOW_PANEL') {
           isClosedByUser = false;
+          isExtensionEnabled = true;
           checkAndInjectControlPanel();
           if (sendResponse) sendResponse({ success: true });
         }
