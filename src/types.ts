@@ -62,6 +62,7 @@ export interface AppConfig {
   auto_evaluate: boolean;
   gemini_model?: string;
   max_jobs_per_company: number;
+  enable_min_company_size?: boolean;
   min_company_size?: number;
   hard_blockers?: string;
 }

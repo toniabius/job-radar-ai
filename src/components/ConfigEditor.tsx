@@ -103,6 +103,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
   const [editingGroupDesc, setEditingGroupDesc] = useState('');
   const [quickAddCompanyInputs, setQuickAddCompanyInputs] = useState<Record<string, string>>({});
 
+
   // Sync state whenever active profile changes
   useEffect(() => {
     setConfig(initialConfig);
@@ -153,7 +154,8 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
     yaml += `auto_evaluate: ${cfg.auto_evaluate}\n`;
     yaml += `gemini_model: "${cfg.gemini_model || "gemini-3.1-flash-lite"}"\n`;
     yaml += `max_jobs_per_company: ${cfg.max_jobs_per_company || 5}\n`;
-    yaml += `min_company_size: ${cfg.min_company_size || 0}\n`;
+    yaml += `enable_min_company_size: ${cfg.enable_min_company_size ?? false}\n`;
+    yaml += `min_company_size: ${cfg.min_company_size || 50}\n`;
     if (cfg.hard_blockers) {
       yaml += `hard_blockers: |\n  ${cfg.hard_blockers.split("\n").join("\n  ")}\n`;
     }
@@ -909,41 +911,80 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
               </div>
 
               {/* Minimum Company Size Block */}
-              <div>
-                <div className="flex items-center space-x-2 mb-3">
-                  <Users className="w-4 h-4 text-emerald-600" />
-                  <h3 className="font-bold text-slate-900 text-sm">Minimum Company Headcount</h3>
-                </div>
-
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+              {(() => {
+                const isMinCompanySizeEnabled = config.enable_min_company_size !== false;
+                return (
                   <div>
-                    <label className="font-bold text-slate-800 block text-[11px] mb-1">
-                      Minimum Company Size (Employees):
-                    </label>
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="number"
-                        min="0"
-                        step="10"
-                        placeholder="e.g., 50 or 100"
-                        value={config.min_company_size ?? 0}
-                        onChange={(e) => setConfig({ ...config, min_company_size: Math.max(0, parseInt(e.target.value) || 0) })}
-                        className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 font-medium focus:outline-none focus:border-emerald-500 font-mono shadow-2xs"
-                      />
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                      <div className="flex items-center space-x-3">
+                        <label className="flex items-center space-x-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={isMinCompanySizeEnabled}
+                            onChange={(e) => {
+                              const newCfg = { ...config, enable_min_company_size: e.target.checked };
+                              setConfig(newCfg);
+                              saveUpdatedConfig(newCfg);
+                            }}
+                            className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
+                          />
+                          <Users className={`w-4 h-4 ${isMinCompanySizeEnabled ? 'text-emerald-600' : 'text-slate-400'}`} />
+                          <h3 className="font-bold text-slate-900 text-sm">Minimum Company Headcount Filter</h3>
+                        </label>
+                        <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
+                          isMinCompanySizeEnabled
+                            ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                            : 'bg-slate-200 text-slate-600 border-slate-300'
+                        }`}>
+                          {isMinCompanySizeEnabled ? 'Active Filter' : 'Disabled'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                      <div className={`space-y-3 transition-opacity ${isMinCompanySizeEnabled ? 'opacity-100' : 'opacity-60'}`}>
+                        <div>
+                          <label className="font-bold text-slate-800 block text-[11px] mb-1">
+                            Minimum Company Headcount (Employees):
+                          </label>
+                          <div className="flex items-center space-x-2">
+                            <input
+                              type="number"
+                              min="0"
+                              step="10"
+                              disabled={!isMinCompanySizeEnabled}
+                              placeholder="e.g., 50 or 100"
+                              value={config.min_company_size ?? 50}
+                              onChange={(e) => {
+                                const val = Math.max(0, parseInt(e.target.value) || 0);
+                                const newCfg = { ...config, min_company_size: val };
+                                setConfig(newCfg);
+                                saveUpdatedConfig(newCfg);
+                              }}
+                              className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 font-medium focus:outline-none focus:border-emerald-500 font-mono shadow-2xs disabled:bg-slate-100 disabled:text-slate-400"
+                            />
+                          </div>
+                        </div>
+
+                        <p className="text-[10px] text-slate-500 pt-0.5 flex items-center justify-between">
+                          <span>
+                            {isMinCompanySizeEnabled && config.min_company_size && config.min_company_size > 0
+                              ? `Strictly ignore & reject companies with under ${config.min_company_size.toLocaleString()} employees via API lookup`
+                              : "Filter disabled — all company sizes allowed"}
+                          </span>
+                          <span className={`text-[9px] px-2 py-0.5 rounded font-mono font-semibold ${
+                            isMinCompanySizeEnabled
+                              ? "bg-rose-100 text-rose-800 border border-rose-200"
+                              : "bg-slate-200 text-slate-600"
+                          }`}>
+                            {isMinCompanySizeEnabled ? "Strict Hard Filter Active" : "Filter Off"}
+                          </span>
+                        </p>
+                      </div>
                     </div>
                   </div>
-                  <p className="text-[10px] text-slate-500 pt-0.5 flex items-center justify-between">
-                    <span>
-                      {config.min_company_size && config.min_company_size > 0
-                        ? `Strictly ignore companies with under ${config.min_company_size.toLocaleString()} employees`
-                        : "No minimum size limit (all companies allowed)"}
-                    </span>
-                    <span className="bg-rose-100 text-rose-800 text-[9px] px-1.5 py-0.5 rounded font-mono font-semibold">
-                      Strict Hard Filter
-                    </span>
-                  </p>
-                </div>
-              </div>
+                );
+              })()}
 
               {/* Time Filter Block */}
               <div>

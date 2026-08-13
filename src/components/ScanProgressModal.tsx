@@ -123,13 +123,24 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
           total = parseInt(legacyMatch[2], 10);
           if (legacyMatch[3]) currentRole = legacyMatch[3];
         }
+        // Match "Evaluating: "Title" @ Company..."
+        const simpleEvalMatch = msg.match(/Evaluating:\s+(.+)/i);
+        if (simpleEvalMatch) {
+          currentRole = simpleEvalMatch[1].split(',')[0].replace(/^"|"$/g, '').trim();
+        }
+
+        // Match "[EVAL DONE] "Title" @ Company..."
+        const doneSimpleMatch = msg.match(/\[EVAL DONE\]\s+"([^"]+)"\s+@\s+([^\n->]+)/i);
+        if (doneSimpleMatch) {
+          currentRole = `${doneSimpleMatch[1]} @ ${doneSimpleMatch[2].trim()}`;
+        }
       }
     }
 
     if (!isEvaluating) return null;
-    if (total === 0) total = 1;
-    const percent = Math.min(100, Math.round((current / total) * 100));
-    return { current, total, percent, currentRole, isEvaluating };
+    const hasTotal = total > 0;
+    const percent = hasTotal ? Math.min(100, Math.round((current / total) * 100)) : 0;
+    return { current, total, hasTotal, percent, currentRole, isEvaluating };
   };
 
   const evalProgress = getEvalProgress();
@@ -374,14 +385,18 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
                 </div>
                 {evalProgress && (
                   <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-mono text-xs font-bold">
-                    Evaluating {evalProgress.current}/{evalProgress.total} ({evalProgress.percent}%)
+                    {evalProgress.hasTotal
+                      ? `Evaluating ${evalProgress.current}/${evalProgress.total} (${evalProgress.percent}%)`
+                      : 'AI Evaluation Active'}
                   </span>
                 )}
               </div>
 
               {evalProgress ? (
                 <p className="text-[11px] text-slate-300 font-mono truncate">
-                  <span className="text-emerald-400 font-semibold">Evaluating ({evalProgress.current}/{evalProgress.total}):</span>{' '}
+                  <span className="text-emerald-400 font-semibold">
+                    {evalProgress.hasTotal ? `Evaluating (${evalProgress.current}/${evalProgress.total}):` : 'Evaluating:'}
+                  </span>{' '}
                   {evalProgress.currentRole || 'In progress...'}
                 </p>
               ) : (

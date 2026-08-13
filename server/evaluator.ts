@@ -13,6 +13,7 @@ import {
   getGeminiClient,
   enforceGeminiRateLimit,
   ALL_GEMINI_FALLBACK_MODELS,
+  fetchCompanyHeadcountWithAI,
 } from "./gemini.js";
 
 export function sanitizeJobEvaluation(job: Job, preferredLocations: string[], configObj?: AppConfig): Job {
@@ -64,7 +65,22 @@ export function sanitizeJobEvaluation(job: Job, preferredLocations: string[], co
     /\b(?:graduate|new grad|new graduate|university graduate|early career|intern|internship|0-1 years|0-2 years)\b/i.test(titleAndDescLower) ||
     /\b(associate software engineer|graduate engineer)\b/i.test((job.title || '').toLowerCase());
 
+  const hbCheck = detectHardBlockerViolation(job, config.hard_blockers, config.min_company_size, config.enable_min_company_size);
+
+  if (hbCheck.isBlocked) {
+    if (!cleanedReasons.some((r) => r.includes("Hard Blocker"))) {
+      cleanedReasons = [hbCheck.reason, ...cleanedReasons];
+    }
+    if (!cleanedMissing.some((m) => m.includes("Hard Blocker"))) {
+      cleanedMissing = [hbCheck.reason, ...cleanedMissing];
+    }
+    if (!cleanedSummary.includes("Hard Blocker")) {
+      cleanedSummary = `${hbCheck.reason}. ${cleanedSummary}`.trim();
+    }
+  }
+
   const hasHardBlocker =
+    hbCheck.isBlocked ||
     cleanedMissing.some((m) => m.toLowerCase().includes("hard blocker")) ||
     cleanedReasons.some((r) => r.toLowerCase().includes("hard blocker"));
 
@@ -303,14 +319,20 @@ export function extractCompanyEmployeeCount(text: string): { min: number; max: n
   return null;
 }
 
-export function detectHardBlockerViolation(job: Job, hardBlockersText?: string, minCompanySize?: number): { isBlocked: boolean; reason: string } {
-  if (minCompanySize && minCompanySize > 0) {
+export function detectHardBlockerViolation(
+  job: Job,
+  hardBlockersText?: string,
+  minCompanySize?: number,
+  enableMinCompanySize?: boolean
+): { isBlocked: boolean; reason: string } {
+  const isMinSizeActive = enableMinCompanySize !== undefined ? Boolean(enableMinCompanySize) : (Boolean(minCompanySize) && minCompanySize! > 0);
+  if (isMinSizeActive && minCompanySize && minCompanySize > 0) {
     const sizeSource = `${job.company_size || ''} ${job.description || ''}`;
     const parsedSize = extractCompanyEmployeeCount(sizeSource);
     if (parsedSize && parsedSize.max < minCompanySize) {
       return {
         isBlocked: true,
-        reason: `Hard Blocker Triggered: Company size ("${parsedSize.text}") is strictly below minimum target of ${minCompanySize} employees`
+        reason: `Hard Blocker Triggered: Company size for "${job.company}" ("${parsedSize.text}") is strictly below minimum target of ${minCompanySize.toLocaleString()} employees`
       };
     }
   }
@@ -456,11 +478,14 @@ export function detectHardBlockerViolation(job: Job, hardBlockersText?: string, 
       }
     }
 
-    // Rule 5: People Manager roles
+    // Rule 5: People Manager / Engineering Manager / Management roles
     if (
       normLine.includes("people manager") ||
       normLine.includes("engineering manager") ||
-      normLine.includes("manager roles")
+      normLine.includes("manager roles") ||
+      normLine.includes("manager") ||
+      normLine.includes("management") ||
+      normLine.includes("people management")
     ) {
       if (
         titleLower.includes("engineering manager") ||
@@ -469,11 +494,25 @@ export function detectHardBlockerViolation(job: Job, hardBlockersText?: string, 
         titleLower.includes("tech lead manager") ||
         titleLower.includes("people manager") ||
         titleLower.includes("director of engineering") ||
-        titleLower.includes("vp of engineering")
+        titleLower.includes("vp of engineering") ||
+        titleLower.includes("head of engineering") ||
+        titleLower.includes("engineering lead manager") ||
+        titleLower.includes("manager, software") ||
+        titleLower.includes("manager, engineering") ||
+        titleLower.includes("manager - ") ||
+        titleLower.endsWith(" manager") ||
+        titleLower.includes(" manager ") ||
+        normJobText.includes("people management experience") ||
+        normJobText.includes("engineering management experience") ||
+        normJobText.includes("software engineering management experience") ||
+        normJobText.includes("years of software engineering management") ||
+        normJobText.includes("years of relevant software engineering management") ||
+        normJobText.includes("accomplished engineering manager") ||
+        normJobText.includes("seeking an engineering manager")
       ) {
         return {
           isBlocked: true,
-          reason: `Hard Blocker Triggered: People Manager role ("${line}")`
+          reason: `Hard Blocker Triggered: People Manager / Engineering Management role ("${line}")`
         };
       }
     }
@@ -691,7 +730,7 @@ export function generateHeuristicEvaluation(job: Job, resume: ResumeData, config
     overQualNote = `Over-Qualification: Candidate has ~${candidateYoe} years experience, but position is targeted at New Graduates / Early Career / Entry-Level applicants`;
   }
 
-  const hardBlockerCheck = detectHardBlockerViolation(job, config?.hard_blockers, config?.min_company_size);
+  const hardBlockerCheck = detectHardBlockerViolation(job, config?.hard_blockers, config?.min_company_size, config?.enable_min_company_size);
   let hardBlockerPenalty = 0;
   let hardBlockerNote = "";
   if (hardBlockerCheck.isBlocked) {
@@ -942,6 +981,7 @@ export async function batchEvaluateJobsWithGemini(
   for (let b = 0; b < jobsList.length; b += BATCH_SIZE) {
     const chunk = jobsList.slice(b, b + BATCH_SIZE);
 
+    // Prompt construction without pre-loop company size lookup
     const promptJobsText = chunk
       .map((j) => {
         const textSnippet = (j.description || "")
@@ -979,9 +1019,19 @@ ${promptJobsText}
 
 Instructions:
 - Evaluate each job ID separately against the candidate resume.
-- CRITICAL HARD BLOCKER RULE:
-  - DO NOT flag standard EEO statement mentions of "citizenship" or standard background checks as requiring U.S. Citizenship or Security Clearance. ONLY flag if the job explicitly requires U.S. Citizenship or Security Clearance.
-  - DO NOT flag software engineering or AI engineering roles as "Data Engineer" or "Test Engineer" unless the job title explicitly specifies Data Engineer, Test Engineer, or QA.
+- CRITICAL HARD BLOCKER RULE (MANDATORY & ABSOLUTE CAP <= 15 POINTS):
+  - Carefully inspect each job posting against the candidate's Hard Blockers:
+    ${configObj.hard_blockers || "U.S. Citizenship requirement, Security Clearance, Contractor / 1099, Pure Frontend, People Manager roles"}
+  - SPECIFIC HARD BLOCKER EXAMPLES:
+    1. People Manager / Management roles: Any position titled "Engineering Manager", "Software Engineering Manager", "Manager", "Director", "VP", or requiring formal software engineering / people management experience (e.g., 3+ years software engineering management experience).
+    2. U.S. Citizenship / Security Clearance: Positions explicitly requiring active Security Clearance or restricted to U.S. Citizens (ignore standard non-discrimination EEO statements).
+    3. Contractor / 1099: Contractor, 1099, or temporary roles.
+    4. Pure Frontend: Pure frontend roles without backend engineering.
+    5. Company Size: Headcount strictly below candidate's minimum target company size.
+  - IF A JOB TRIGGERS ANY HARD BLOCKER (e.g. position is an Engineering Manager / People Manager role when People Manager is blocked):
+    1. The match_level MUST BE CLASSIFIED AS "Unmatched".
+    2. The match score MUST BE CAPPED AT A MAXIMUM OF 15/100 (score MUST BE <= 15).
+    3. You MUST state the triggered hard blocker as the top item in reasons, missing_skills, and summary (e.g. "Hard Blocker Triggered: Role is a People Manager / Engineering Manager position").
 - STRICT CORE SKILL & PROGRAMMING LANGUAGE VERIFICATION RULE (MANDATORY):
   - Extract skills and programming languages explicitly listed in the candidate's resume text.
   - Verify every primary programming language or core technology required by the job (e.g., C++, Rust, Go, Java, Python, C#, Swift, GPU programming, CUDA, CUTLASS, etc.) against the candidate's resume.
@@ -1063,7 +1113,7 @@ Instructions:
             const job = chunk[cIdx];
             const evalObj = parsedArray.find((p) => p.jobId === job.id) || parsedArray[cIdx] || {};
 
-            const hbCheck = detectHardBlockerViolation(job, configObj.hard_blockers, configObj.min_company_size);
+            const hbCheck = detectHardBlockerViolation(job, configObj.hard_blockers, 0, false);
             if (hbCheck.isBlocked) {
               evalObj.score = Math.min(evalObj.score || 15, 15);
               evalObj.match_level = 'Unmatched';
@@ -1163,6 +1213,44 @@ Instructions:
                         evalObj.missing_skills.unshift(`Annual salary high range ($${maxDisclosed.toLocaleString()}) below target minimum ($${targetMinSal.toLocaleString()})`);
                       }
                     }
+                  }
+                }
+              }
+
+              // Evaluate Company Size ONLY if score is above cutoff (> 15) per user requirement:
+              // "fetch job -> evaluate -> if above cutoff, see if company size is bigger than config, if not, mark as weak (cap at 15 score) / -> if original score is below cutoff, no need to check"
+              const cutoffScore = 15;
+              const isMinSizeActive = configObj.enable_min_company_size && configObj.min_company_size && configObj.min_company_size > 0;
+              if (isMinSizeActive && evalObj.score > cutoffScore) {
+                if (!job.company_size || job.company_size === "Unknown" || job.company_size === "Unspecified Size") {
+                  try {
+                    const sizeInfo = await fetchCompanyHeadcountWithAI(job.company, job.description);
+                    if (sizeInfo.sizeText) {
+                      job.company_size = sizeInfo.sizeText;
+                    }
+                  } catch (err) {
+                    console.warn(`[EVAL] Company size lookup failed for ${job.company}:`, err);
+                  }
+                }
+
+                const targetMinSize = configObj.min_company_size!;
+                const sizeSource = `${job.company_size || ''} ${job.description || ''}`;
+                const parsedSize = extractCompanyEmployeeCount(sizeSource);
+
+                if (parsedSize && parsedSize.max < targetMinSize) {
+                  evalObj.score = Math.min(evalObj.score, 15);
+                  evalObj.match_level = 'Weak Match';
+                  const sizeMsg = `Company Size Filter: Company "${job.company}" headcount (~${parsedSize.text}) is strictly below minimum target of ${targetMinSize.toLocaleString()} employees`;
+                  if (!Array.isArray(evalObj.reasons)) evalObj.reasons = [];
+                  if (!evalObj.reasons.some((r: string) => r.includes("Company Size Filter"))) {
+                    evalObj.reasons.unshift(sizeMsg);
+                  }
+                  if (!Array.isArray(evalObj.missing_skills)) evalObj.missing_skills = [];
+                  if (!evalObj.missing_skills.some((m: string) => m.includes("Company Size Filter"))) {
+                    evalObj.missing_skills.unshift(sizeMsg);
+                  }
+                  if (!evalObj.summary || !evalObj.summary.includes("Company Size Filter")) {
+                    evalObj.summary = `${sizeMsg}. ${evalObj.summary || ''}`.trim();
                   }
                 }
               }

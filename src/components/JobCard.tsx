@@ -3,6 +3,8 @@ import { ExternalLink, Sparkles, MapPin, Clock, Briefcase, CheckCircle2, AlertCi
 import { Job } from '../types';
 import { ensureAbsoluteUrl } from '../utils/url';
 
+import { formatDisplayDate } from '../utils/dateUtils';
+
 interface JobCardProps {
   job: Job;
   onSelect: (job: Job) => void;
@@ -112,9 +114,9 @@ export const JobCard: React.FC<JobCardProps> = ({
               {job.applied ? 'Applied' : 'Applied?'}
             </span>
           </label>
-          {job.applied && job.applied_date && (
+          {job.applied && (
             <span className="text-[10px] text-slate-400 font-mono">
-              Applied {job.applied_date}
+              Applied {formatDisplayDate(job.applied_date || job.first_seen)}
             </span>
           )}
         </div>

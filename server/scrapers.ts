@@ -122,6 +122,8 @@ export async function fetchLiveLinkedInJobs(
         if (locName) labelParts.push(locName);
         const taskLabel = labelParts.join(" • ");
 
+        let consecutiveEmptyPages = 0;
+
         for (let startPage = 0; startPage <= 975; startPage += 25) {
           if (isCancelled && isCancelled()) break;
           if (isStopFetching && isStopFetching()) break;
@@ -275,7 +277,7 @@ export async function fetchLiveLinkedInJobs(
                       .replace(/<li[^>]*>/gi, "\n• ")
                       .replace(/<[^>]+>/g, "")
                       .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-                      .replace(/&nbsp;/g, " ").replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+                      .replace(/&nbsp;/g, " ").replace(/&#39;/g, "'").replace(/&#39;/g, "'").replace(/&quot;/g, '"')
                       .replace(/\n{3,}/g, "\n\n")
                       .trim();
                   }
@@ -318,6 +320,7 @@ export async function fetchLiveLinkedInJobs(
             }
 
             if (fetchedCardsData.length > 0) {
+              consecutiveEmptyPages = 0;
               const salaryInputs = fetchedCardsData.map((fd) => ({
                 description: fd.rawHtml || fd.fullDescription,
                 title: fd.card.jobTitle,
@@ -356,22 +359,26 @@ export async function fetchLiveLinkedInJobs(
                 if (addLog) {
                   addLog("SCANNER", `[BATCH FETCHED] Retrieved ${pageBatchJobs.length} posting(s). Triggering immediate evaluation & persistence...`);
                 }
-                await onBatchFetched(pageBatchJobs);
+                try {
+                  await onBatchFetched(pageBatchJobs);
+                } catch (batchErr: any) {
+                  console.error(`[BATCH ERROR] Error processing batch for ${taskLabel}:`, batchErr);
+                  if (addLog) {
+                    addLog("ERROR", `Error during batch evaluation for "${taskLabel}": ${batchErr?.message || batchErr}`);
+                  }
+                }
               }
-            }
-
-            const totalOnPage = cardMatches.length;
-            const matchedOnPage = validCards.length;
-            const unmatchedOnPage = totalOnPage - matchedOnPage;
-
-            if (targetCompanies.length > 0 && totalOnPage > 0 && unmatchedOnPage >= totalOnPage - 1) {
-              if (addLog) {
-                addLog(
-                  "SCANNER",
-                  `Completed pagination for "${taskLabel}" (page start=${startPage}): ${unmatchedOnPage} of ${totalOnPage} raw listings did not match target company criteria (unmatched >= ${totalOnPage - 1}). Stopping further pagination for this query.`
-                );
+            } else {
+              consecutiveEmptyPages++;
+              if (consecutiveEmptyPages >= 2) {
+                if (addLog) {
+                  addLog(
+                    "SCANNER",
+                    `Completed search pagination for "${taskLabel}" at page start=${startPage} (2 consecutive pages with 0 matching new postings). Moving to next search target.`
+                  );
+                }
+                break;
               }
-              break;
             }
           } catch (err) {
             console.error(`Error fetching live LinkedIn jobs for ${taskLabel} page ${startPage}:`, err);

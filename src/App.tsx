@@ -14,6 +14,7 @@ import { Job, AppConfig, ResumeData, UserProfile, PipelineLog, CandidateProfile 
 import { Search, Sparkles, Filter, ArrowUpDown, Building, DollarSign, MapPin, X, Clock, User, Trash2, CheckCircle2 } from 'lucide-react';
 import { parseLocationGroup, parseMinSalary } from './utils/location';
 import { playCompletionChime } from './utils/audio';
+import { getLocalDateString } from './utils/dateUtils';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTabType>('dashboard');
@@ -207,7 +208,8 @@ export default function App() {
     if (!isRunningPipeline) return;
     const interval = setInterval(() => {
       fetchPipelineLogs();
-    }, 1000);
+      fetchJobs();
+    }, 1500);
     return () => clearInterval(interval);
   }, [isRunningPipeline]);
 
@@ -464,12 +466,57 @@ export default function App() {
     }
 
     try {
-      await Promise.all(
-        selectedJobIds.map((id) => fetch(`/api/jobs/${id}`, { method: 'DELETE' }))
-      );
-      await fetchReport();
+      const res = await fetch('/api/jobs/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedJobIds }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.jobs) {
+          setJobs(data.jobs);
+        }
+        await fetchReport();
+      } else {
+        await fetchJobs();
+      }
     } catch (err) {
       console.error('Error deleting selected jobs:', err);
+      await fetchJobs();
+    }
+  };
+
+  // Bulk Toggle Applied Status
+  const handleBulkToggleApplied = async (selectedJobIds: string[], applied: boolean) => {
+    if (!selectedJobIds || selectedJobIds.length === 0) return;
+    const selectedSet = new Set(selectedJobIds);
+    const todayStr = getLocalDateString(new Date());
+
+    setJobs((prev) =>
+      prev.map((j) =>
+        selectedSet.has(j.id)
+          ? { ...j, applied, applied_date: applied ? todayStr : undefined }
+          : j
+      )
+    );
+
+    try {
+      const res = await fetch('/api/jobs/bulk-applied', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedJobIds, applied }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.jobs) {
+          setJobs(data.jobs);
+        }
+        await fetchReport();
+      } else {
+        await fetchJobs();
+      }
+    } catch (err) {
+      console.error('Error bulk toggling applied status:', err);
       await fetchJobs();
     }
   };
@@ -504,7 +551,7 @@ export default function App() {
 
   // Toggle Applied Status
   const handleToggleApplied = async (job: Job, applied: boolean, customDate?: string) => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getLocalDateString(new Date());
     const applied_date = applied ? (customDate || todayStr) : undefined;
     const updatedJob = { ...job, applied, applied_date };
     setJobs((prev) => prev.map((j) => (j.id === job.id ? updatedJob : j)));
@@ -1104,6 +1151,7 @@ export default function App() {
             onDeleteSelectedJobs={handleDeleteSelectedJobs}
             onDeleteBelowThreshold={handleDeleteJobsBelowThreshold}
             onToggleApplied={handleToggleApplied}
+            onBulkToggleApplied={handleBulkToggleApplied}
             onEvaluateJob={handleEvaluateJob}
             onEvaluateAllJobs={handleEvaluateAllJobs}
             onEvaluateSelectedJobs={handleEvaluateAllJobs}

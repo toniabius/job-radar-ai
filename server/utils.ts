@@ -313,11 +313,14 @@ export function isLocationMatch(jobLoc: string, preferredLocations: string[]): b
   const prefLowerList = preferredLocations.map((l) => l.toLowerCase().trim()).filter(Boolean);
   if (prefLowerList.includes("all") || prefLowerList.includes("any") || prefLowerList.includes("anywhere")) return true;
 
+  const prefersRemote = prefLowerList.some((p) => p.includes("remote") || p.includes("anywhere") || p.includes("work from home") || p.includes("telecommute"));
+  if (prefersRemote) return true;
+
   const locLower = jobLoc.toLowerCase().trim();
 
   const isJobRemote = locLower.includes("remote") || locLower.includes("work from home") || locLower.includes("anywhere");
   const isJobHybrid = locLower.includes("hybrid");
-  if (isJobRemote && prefLowerList.some((p) => p.includes("remote") || p.includes("anywhere"))) return true;
+  if (isJobRemote && prefersRemote) return true;
   if (isJobHybrid && prefLowerList.some((p) => p.includes("hybrid"))) return true;
 
   if (locLower === "united states" || locLower === "us" || locLower === "usa") {

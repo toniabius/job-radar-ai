@@ -30,7 +30,7 @@ import {
   CANDIDATE_PROFILE_JSON_PATH,
   getDefaultCandidateProfile,
 } from "./server/storage.js";
-import { generateApplicationAnswer, parseCandidateProfileWithAI } from "./server/gemini.js";
+import { generateApplicationAnswer, parseCandidateProfileWithAI, fetchCompanyHeadcountWithAI } from "./server/gemini.js";
 import {
   extractSkillsRegex,
   extractSkillsWithGemini,
@@ -357,6 +357,21 @@ app.post("/api/resume/extract-skills", async (req, res) => {
   } catch (err: any) {
     console.error("[RESUME] extract-skills error:", err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Company Size Lookup Endpoint
+app.post("/api/company-size", async (req, res) => {
+  try {
+    const { company, description } = req.body;
+    if (!company || typeof company !== "string" || !company.trim()) {
+      return res.status(400).json({ error: "Company name is required." });
+    }
+    const result = await fetchCompanyHeadcountWithAI(company.trim(), description);
+    res.json({ success: true, company: company.trim(), ...result });
+  } catch (err: any) {
+    console.error("[COMPANY SIZE API] Error:", err);
+    res.status(500).json({ error: err.message || "Failed to determine company size." });
   }
 });
 
@@ -695,6 +710,54 @@ app.delete("/api/jobs/:id", (req, res) => {
   jobs = jobs.filter((j) => j.id !== id);
   saveJobsDB(jobs);
   res.json({ success: true });
+});
+
+app.post("/api/jobs/bulk-delete", (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: "ids array required" });
+    }
+    const deleteSet = new Set(ids);
+    let jobs = loadJobsDB();
+    const initialCount = jobs.length;
+    jobs = jobs.filter((j) => !deleteSet.has(j.id));
+    const deletedCount = initialCount - jobs.length;
+    saveJobsDB(jobs);
+    generateMarkdownReport(jobs);
+    res.json({ success: true, deletedCount, remainingCount: jobs.length, jobs });
+  } catch (err: any) {
+    console.error("Error bulk deleting jobs:", err);
+    res.status(500).json({ error: err.message || "Failed to bulk delete jobs" });
+  }
+});
+
+app.post("/api/jobs/bulk-applied", (req, res) => {
+  try {
+    const { ids, applied } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: "ids array required" });
+    }
+    const targetSet = new Set(ids);
+    const isApplied = Boolean(applied);
+    let jobs = loadJobsDB();
+    jobs = jobs.map((j) => {
+      if (targetSet.has(j.id)) {
+        return {
+          ...j,
+          applied: isApplied,
+          applied_at: isApplied ? new Date().toISOString() : undefined,
+        };
+      }
+      return j;
+    });
+    saveJobsDB(jobs);
+    generateMarkdownReport(jobs);
+    res.json({ success: true, updatedCount: targetSet.size, jobs });
+  } catch (err: any) {
+    console.error("Error bulk toggling applied status:", err);
+    res.status(500).json({ error: err.message || "Failed to bulk update applied status" });
+  }
 });
 
 app.post("/api/jobs/reset", (req, res) => {

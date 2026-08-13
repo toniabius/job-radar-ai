@@ -251,7 +251,7 @@
     await fetchCandidateProfile();
 
     if (!activeProfile) {
-      if (statusEl) statusEl.innerText = '❌ Error: App not running on localhost:3000';
+      if (statusEl) statusEl.innerText = '❌ Error: Candidate profile unavailable';
       alert('Job Radar server is not running or candidate profile is empty. Open http://localhost:3000');
       return;
     }
@@ -260,11 +260,8 @@
 
     const shouldOverride = document.getElementById('jr-cb-override')?.checked || false;
 
-    const container = document.querySelector(
-      '.jobs-easy-apply-modal, .jobs-easy-apply-content, div[role="dialog"], .jobs-apply-form, [data-test-modal], form, .application-form'
-    ) || document.body;
-
     let filledCount = 0;
+    let skippedFilledCount = 0;
 
     const workExps = activeProfile.workExperience || [];
     let titleCount = 0;
@@ -275,321 +272,342 @@
     let descCount = 0;
 
     // Detect work experience section containers on page if present
-    const expContainers = Array.from(container.querySelectorAll(
+    const expContainers = Array.from(document.querySelectorAll(
       '[data-automation-id*="workExperience"], [data-automation-id*="experience"], fieldset, .experience-entry, .work-experience-entry, .work-history-item, .jobs-easy-apply-form-section__group, .form-section'
     )).filter((c) => {
+      if (c.closest('#jr-autofill-panel')) return false;
       const text = c.textContent.toLowerCase();
       return text.includes('title') || text.includes('company') || text.includes('employer') || text.includes('work') || text.includes('experience');
     });
 
-    // 1. Fill Text Inputs & Textareas & Selects
-    const textInputs = container.querySelectorAll(
-      'input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[type="url"], textarea, select'
-    );
+    // 1. Fill Text Inputs & Textareas & Selects across the page (excluding extension panel)
+    const allInputEls = Array.from(document.querySelectorAll(
+      'input, textarea, select, [contenteditable="true"]'
+    )).filter((el) => {
+      if (el.closest('#jr-autofill-panel')) return false;
+      const tag = el.tagName.toLowerCase();
+      const type = (el.getAttribute('type') || (tag === 'input' ? 'text' : '')).toLowerCase();
+      return !['hidden', 'submit', 'button', 'image', 'file', 'reset', 'radio', 'checkbox'].includes(type);
+    });
 
-    textInputs.forEach((input) => {
-      if (input.type === 'hidden' || input.type === 'radio' || input.type === 'checkbox') return;
-
-      // Check override setting: skip if element already has a value and override is disabled
-      if (!shouldOverride) {
-        if (input.tagName === 'SELECT') {
-          if (input.selectedIndex > 0 && input.options[input.selectedIndex]?.value) {
-            return;
-          }
-        } else {
-          if (input.value && input.value.trim() !== '') {
-            return;
-          }
-        }
-      }
-
-      const labelText = getLabelForInput(input).toLowerCase();
-      const inputName = (input.name || input.id || '').toLowerCase();
-      const combinedKey = `${labelText} ${inputName}`;
-
-      let valueToSet = null;
-
-      // Direct Profile Field Matchers
-      if (combinedKey.includes('full name') || combinedKey.includes('complete name') || combinedKey.includes('your name')) {
-        valueToSet = activeProfile.fullName || `${activeProfile.firstName} ${activeProfile.lastName}`.trim();
-      } else if (combinedKey.includes('preferred name') || combinedKey.includes('nickname') || combinedKey.includes('go by')) {
-        valueToSet = activeProfile.preferredName || activeProfile.firstName;
-      } else if (combinedKey.includes('first name') || combinedKey.includes('given name') || combinedKey.includes('fname')) {
-        valueToSet = activeProfile.firstName;
-      } else if (combinedKey.includes('last name') || combinedKey.includes('family name') || combinedKey.includes('surname') || combinedKey.includes('lname')) {
-        valueToSet = activeProfile.lastName;
-      } else if (combinedKey.includes('email')) {
-        valueToSet = activeProfile.email;
-      } else if (combinedKey.includes('phone device') || combinedKey.includes('phone type') || combinedKey.includes('device type')) {
-        valueToSet = activeProfile.phoneDeviceType || 'Mobile';
-      } else if (combinedKey.includes('phone') || combinedKey.includes('mobile') || combinedKey.includes('contact number') || combinedKey.includes('cell')) {
-        valueToSet = activeProfile.phone;
-      } else if (combinedKey.includes('how did you hear') || combinedKey.includes('hear about us') || combinedKey.includes('referral source') || combinedKey.includes('how did you find')) {
-        valueToSet = activeProfile.howDidYouHear || 'LinkedIn';
-      } else if (combinedKey.includes('city')) {
-        valueToSet = activeProfile.city;
-      } else if (combinedKey.includes('postal') || combinedKey.includes('zip') || combinedKey.includes('postcode')) {
-        valueToSet = activeProfile.zipCode;
-      } else if (combinedKey.includes('state') || combinedKey.includes('province') || combinedKey.includes('region')) {
-        valueToSet = activeProfile.state;
-      } else if (combinedKey.includes('country')) {
-        valueToSet = activeProfile.country;
-      } else if (combinedKey.includes('linkedin')) {
-        valueToSet = activeProfile.linkedInUrl;
-      } else if (combinedKey.includes('github')) {
-        valueToSet = activeProfile.githubUrl;
-      } else if (combinedKey.includes('portfolio') || combinedKey.includes('website') || combinedKey.includes('personal site')) {
-        valueToSet = activeProfile.portfolioUrl;
-      } else if (combinedKey.includes('desired salary') || combinedKey.includes('compensation') || combinedKey.includes('expected salary') || combinedKey.includes('pay rate')) {
-        valueToSet = activeProfile.desiredSalary;
-      } else if (combinedKey.includes('years of experience') || combinedKey.includes('years experience') || combinedKey.includes('how many years')) {
-        valueToSet = activeProfile.yearsExperience;
-      } else if (combinedKey.includes('notice period') || combinedKey.includes('how soon can you start')) {
-        valueToSet = activeProfile.noticePeriod;
-      } else if (
-        combinedKey.includes('sponsorship') ||
-        combinedKey.includes('require sponsorship') ||
-        combinedKey.includes('immigration-related') ||
-        combinedKey.includes('visa sponsorship') ||
-        combinedKey.includes('require visa')
-      ) {
-        valueToSet = activeProfile.sponsorshipRequired || 'No';
-      } else if (
-        combinedKey.includes('legally authorized') ||
-        combinedKey.includes('authorized to work') ||
-        combinedKey.includes('legally eligible') ||
-        combinedKey.includes('eligible to work') ||
-        combinedKey.includes('eligibility') ||
-        combinedKey.includes('right to work') ||
-        combinedKey.includes('country/region') ||
-        combinedKey.includes('lawful permanent resident') ||
-        combinedKey.includes('employment eligibility')
-      ) {
-        valueToSet = activeProfile.legallyAuthorized || 'Yes';
-      } else if (combinedKey.includes('work authorization') || combinedKey.includes('visa status') || combinedKey.includes('work permit') || combinedKey.includes('work status')) {
-        valueToSet = activeProfile.workAuthorization || 'Authorized to work';
-      } else if (combinedKey.includes('veteran status') || combinedKey.includes('veteran')) {
-        valueToSet = activeProfile.veteranStatus || 'I am not a protected veteran';
-      } else if (combinedKey.includes('gender') || combinedKey.includes('sex')) {
-        valueToSet = activeProfile.gender || 'Decline to Self-Identify';
-      } else if (combinedKey.includes('ethnicity') || combinedKey.includes('race') || combinedKey.includes('hispanic')) {
-        valueToSet = activeProfile.ethnicity || 'Decline to Self-Identify';
-      } else if (combinedKey.includes('disability status') || combinedKey.includes('disability') || combinedKey.includes('handicap')) {
-        valueToSet = activeProfile.disabilityStatus || 'No, I do not have a disability';
-      }
-
-      // Work Experience Field Matchers (Supports Multiple Work Experiences)
-      if (!valueToSet && workExps.length > 0) {
-        const isMostRecentOrCurrent = combinedKey.includes('most recent') || combinedKey.includes('current employer') || combinedKey.includes('current title') || combinedKey.includes('present company');
-
-        // Job Title
-        if (combinedKey.includes('job title') || combinedKey.includes('most recent title') || (combinedKey.includes('title') && (combinedKey.includes('job') || combinedKey.includes('work') || combinedKey.includes('role')))) {
-          let idx = 0;
-          if (!isMostRecentOrCurrent) {
-            const containerIdx = expContainers.findIndex((c) => c.contains(input));
-            idx = containerIdx !== -1 ? containerIdx : titleCount;
-            titleCount++;
-          }
-          const exp = workExps[idx];
-          if (exp) valueToSet = exp.title;
-        }
-        // Company / Employer
-        else if (combinedKey.includes('company') || combinedKey.includes('employer') || combinedKey.includes('organization')) {
-          let idx = 0;
-          if (!isMostRecentOrCurrent) {
-            const containerIdx = expContainers.findIndex((c) => c.contains(input));
-            idx = containerIdx !== -1 ? containerIdx : companyCount;
-            companyCount++;
-          }
-          const exp = workExps[idx];
-          if (exp) valueToSet = exp.company;
-        }
-        // Location
-        else if (combinedKey.includes('location') && (combinedKey.includes('work') || combinedKey.includes('job') || combinedKey.includes('company') || combinedKey.includes('employer'))) {
-          let idx = 0;
-          if (!isMostRecentOrCurrent) {
-            const containerIdx = expContainers.findIndex((c) => c.contains(input));
-            idx = containerIdx !== -1 ? containerIdx : locationCount;
-            locationCount++;
-          }
-          const exp = workExps[idx];
-          if (exp) valueToSet = exp.location || activeProfile.city;
-        }
-        // Start Date / Month
-        else if (combinedKey.includes('start date') || combinedKey.includes('start month') || combinedKey.includes('from month') || combinedKey.includes('from date') || (combinedKey.includes('from') && (combinedKey.includes('work') || combinedKey.includes('job') || combinedKey.includes('date')))) {
-          let idx = 0;
-          if (!isMostRecentOrCurrent) {
-            const containerIdx = expContainers.findIndex((c) => c.contains(input));
-            idx = containerIdx !== -1 ? containerIdx : startDateCount;
-            startDateCount++;
-          }
-          const exp = workExps[idx];
-          if (exp) valueToSet = exp.startMonth && exp.startYear ? `${exp.startMonth}/${exp.startYear}` : exp.startYear || '2024';
-        }
-        // End Date / Month
-        else if (combinedKey.includes('end date') || combinedKey.includes('end month') || combinedKey.includes('to month') || combinedKey.includes('to date') || (combinedKey.includes('to') && (combinedKey.includes('work') || combinedKey.includes('job') || combinedKey.includes('date')))) {
-          let idx = 0;
-          if (!isMostRecentOrCurrent) {
-            const containerIdx = expContainers.findIndex((c) => c.contains(input));
-            idx = containerIdx !== -1 ? containerIdx : endDateCount;
-            endDateCount++;
-          }
-          const exp = workExps[idx];
-          if (exp) valueToSet = exp.currentlyWorkHere ? 'Present' : (exp.endMonth && exp.endYear ? `${exp.endMonth}/${exp.endYear}` : exp.endYear || 'Present');
-        }
-        // Description / Responsibilities
-        else if ((combinedKey.includes('role description') || combinedKey.includes('responsibilities') || combinedKey.includes('job description') || combinedKey.includes('duties') || combinedKey.includes('summary')) && input.tagName === 'TEXTAREA') {
-          let idx = 0;
-          if (!isMostRecentOrCurrent) {
-            const containerIdx = expContainers.findIndex((c) => c.contains(input));
-            idx = containerIdx !== -1 ? containerIdx : descCount;
-            descCount++;
-          }
-          const exp = workExps[idx];
-          if (exp) valueToSet = exp.description;
-        }
-      }
-
-      // Check Dynamic Custom Personal Contact Fields
-      if (!valueToSet && activeProfile.customFields && activeProfile.customFields.length > 0) {
-        for (const cf of activeProfile.customFields) {
-          const cfLabel = (cf.label || '').toLowerCase().trim();
-          if (cfLabel && (combinedKey.includes(cfLabel) || labelText.includes(cfLabel))) {
-            valueToSet = cf.value;
-            break;
+    allInputEls.forEach((input) => {
+      try {
+        // Check override setting: skip if element already has a value and override is disabled
+        if (!shouldOverride) {
+          if (input.tagName === 'SELECT') {
+            const val = input.options[input.selectedIndex]?.value || '';
+            const txt = (input.options[input.selectedIndex]?.text || '').toLowerCase().trim();
+            if (input.selectedIndex > 0 && val && !txt.includes('select') && !txt.includes('choose') && txt !== '--') {
+              skippedFilledCount++;
+              return;
+            }
+          } else {
+            const val = (input.value || input.textContent || '').trim();
+            if (val !== '') {
+              skippedFilledCount++;
+              return;
+            }
           }
         }
-      }
 
-      // Check QA Knowledge Base
-      if (!valueToSet && activeProfile.knowledgeBase && activeProfile.knowledgeBase.length > 0) {
-        for (const kb of activeProfile.knowledgeBase) {
-          const pattern = (kb.questionPattern || '').toLowerCase();
-          if (pattern && labelText.includes(pattern)) {
-            valueToSet = kb.answer;
-            break;
+        const labelText = getLabelForInput(input).toLowerCase();
+        const inputName = (input.getAttribute('name') || input.id || input.getAttribute('aria-label') || input.placeholder || '').toLowerCase();
+        const combinedKey = `${labelText} ${inputName}`.trim();
+
+        let valueToSet = null;
+
+        // Direct Profile Field Matchers
+        if (combinedKey.includes('full name') || combinedKey.includes('complete name') || combinedKey.includes('your name') || (combinedKey.includes('name') && !combinedKey.includes('first') && !combinedKey.includes('last') && !combinedKey.includes('company') && !combinedKey.includes('school') && !combinedKey.includes('file') && !combinedKey.includes('user') && !combinedKey.includes('preferred') && !combinedKey.includes('nick'))) {
+          valueToSet = activeProfile.fullName || `${activeProfile.firstName} ${activeProfile.lastName}`.trim();
+        } else if (combinedKey.includes('preferred name') || combinedKey.includes('nickname') || combinedKey.includes('go by') || combinedKey.includes('chosen name')) {
+          valueToSet = activeProfile.preferredName || activeProfile.firstName;
+        } else if (combinedKey.includes('first name') || combinedKey.includes('given name') || combinedKey.includes('fname') || combinedKey.includes('forename') || combinedKey.includes('first')) {
+          valueToSet = activeProfile.firstName;
+        } else if (combinedKey.includes('last name') || combinedKey.includes('family name') || combinedKey.includes('surname') || combinedKey.includes('lname') || combinedKey.includes('last')) {
+          valueToSet = activeProfile.lastName;
+        } else if (combinedKey.includes('email') || combinedKey.includes('e-mail')) {
+          valueToSet = activeProfile.email;
+        } else if (combinedKey.includes('phone device') || combinedKey.includes('phone type') || combinedKey.includes('device type')) {
+          valueToSet = activeProfile.phoneDeviceType || 'Mobile';
+        } else if (combinedKey.includes('phone') || combinedKey.includes('mobile') || combinedKey.includes('contact number') || combinedKey.includes('cell') || combinedKey.includes('telephone')) {
+          valueToSet = activeProfile.phone;
+        } else if (combinedKey.includes('how did you hear') || combinedKey.includes('hear about us') || combinedKey.includes('referral source') || combinedKey.includes('how did you find')) {
+          valueToSet = activeProfile.howDidYouHear || 'LinkedIn';
+        } else if (combinedKey.includes('street address') || combinedKey.includes('address line 1') || combinedKey.includes('street') || (combinedKey.includes('address') && !combinedKey.includes('email'))) {
+          valueToSet = activeProfile.streetAddress || activeProfile.city;
+        } else if (combinedKey.includes('city') || combinedKey.includes('town')) {
+          valueToSet = activeProfile.city;
+        } else if (combinedKey.includes('postal') || combinedKey.includes('zip') || combinedKey.includes('postcode')) {
+          valueToSet = activeProfile.zipCode;
+        } else if (combinedKey.includes('state') || combinedKey.includes('province') || combinedKey.includes('region')) {
+          valueToSet = activeProfile.state;
+        } else if (combinedKey.includes('country') || combinedKey.includes('nation')) {
+          valueToSet = activeProfile.country;
+        } else if (combinedKey.includes('linkedin')) {
+          valueToSet = activeProfile.linkedInUrl;
+        } else if (combinedKey.includes('github')) {
+          valueToSet = activeProfile.githubUrl;
+        } else if (combinedKey.includes('portfolio') || combinedKey.includes('website') || combinedKey.includes('personal site') || combinedKey.includes('blog')) {
+          valueToSet = activeProfile.portfolioUrl;
+        } else if (combinedKey.includes('desired salary') || combinedKey.includes('compensation') || combinedKey.includes('expected salary') || combinedKey.includes('pay rate') || combinedKey.includes('desired pay') || combinedKey.includes('target salary')) {
+          valueToSet = activeProfile.desiredSalary;
+        } else if (combinedKey.includes('years of experience') || combinedKey.includes('years experience') || combinedKey.includes('how many years') || combinedKey.includes('total experience')) {
+          valueToSet = activeProfile.yearsExperience;
+        } else if (combinedKey.includes('notice period') || combinedKey.includes('how soon can you start') || combinedKey.includes('availability') || combinedKey.includes('start date')) {
+          valueToSet = activeProfile.noticePeriod;
+        } else if (
+          combinedKey.includes('sponsorship') ||
+          combinedKey.includes('require sponsorship') ||
+          combinedKey.includes('immigration-related') ||
+          combinedKey.includes('visa sponsorship') ||
+          combinedKey.includes('require visa')
+        ) {
+          valueToSet = activeProfile.sponsorshipRequired || 'No';
+        } else if (
+          combinedKey.includes('legally authorized') ||
+          combinedKey.includes('authorized to work') ||
+          combinedKey.includes('legally eligible') ||
+          combinedKey.includes('eligible to work') ||
+          combinedKey.includes('eligibility') ||
+          combinedKey.includes('right to work') ||
+          combinedKey.includes('country/region') ||
+          combinedKey.includes('lawful permanent resident') ||
+          combinedKey.includes('employment eligibility')
+        ) {
+          valueToSet = activeProfile.legallyAuthorized || 'Yes';
+        } else if (combinedKey.includes('work authorization') || combinedKey.includes('visa status') || combinedKey.includes('work permit') || combinedKey.includes('work status')) {
+          valueToSet = activeProfile.workAuthorization || 'Authorized to work';
+        } else if (combinedKey.includes('veteran status') || combinedKey.includes('veteran')) {
+          valueToSet = activeProfile.veteranStatus || 'I am not a protected veteran';
+        } else if (combinedKey.includes('gender') || combinedKey.includes('sex identity') || (combinedKey.includes('sex') && !combinedKey.includes('section'))) {
+          valueToSet = activeProfile.gender || 'Decline to Self-Identify';
+        } else if (combinedKey.includes('ethnicity') || combinedKey.includes('race') || combinedKey.includes('hispanic')) {
+          valueToSet = activeProfile.ethnicity || 'Decline to Self-Identify';
+        } else if (combinedKey.includes('disability status') || combinedKey.includes('disability') || combinedKey.includes('handicap')) {
+          valueToSet = activeProfile.disabilityStatus || 'No, I do not have a disability';
+        }
+
+        // Work Experience Field Matchers (Supports Multiple Work Experiences)
+        if (!valueToSet && workExps.length > 0) {
+          const isMostRecentOrCurrent = combinedKey.includes('most recent') || combinedKey.includes('current employer') || combinedKey.includes('current title') || combinedKey.includes('present company');
+
+          // Job Title
+          if (combinedKey.includes('job title') || combinedKey.includes('most recent title') || (combinedKey.includes('title') && (combinedKey.includes('job') || combinedKey.includes('work') || combinedKey.includes('role') || combinedKey.includes('position')))) {
+            let idx = 0;
+            if (!isMostRecentOrCurrent) {
+              const containerIdx = expContainers.findIndex((c) => c.contains(input));
+              idx = containerIdx !== -1 ? containerIdx : titleCount;
+              titleCount++;
+            }
+            const exp = workExps[idx];
+            if (exp) valueToSet = exp.title;
+          }
+          // Company / Employer
+          else if (combinedKey.includes('company') || combinedKey.includes('employer') || combinedKey.includes('organization')) {
+            let idx = 0;
+            if (!isMostRecentOrCurrent) {
+              const containerIdx = expContainers.findIndex((c) => c.contains(input));
+              idx = containerIdx !== -1 ? containerIdx : companyCount;
+              companyCount++;
+            }
+            const exp = workExps[idx];
+            if (exp) valueToSet = exp.company;
+          }
+          // Location
+          else if (combinedKey.includes('location') && (combinedKey.includes('work') || combinedKey.includes('job') || combinedKey.includes('company') || combinedKey.includes('employer'))) {
+            let idx = 0;
+            if (!isMostRecentOrCurrent) {
+              const containerIdx = expContainers.findIndex((c) => c.contains(input));
+              idx = containerIdx !== -1 ? containerIdx : locationCount;
+              locationCount++;
+            }
+            const exp = workExps[idx];
+            if (exp) valueToSet = exp.location || activeProfile.city;
+          }
+          // Start Date / Month
+          else if (combinedKey.includes('start date') || combinedKey.includes('start month') || combinedKey.includes('from month') || combinedKey.includes('from date') || (combinedKey.includes('from') && (combinedKey.includes('work') || combinedKey.includes('job') || combinedKey.includes('date')))) {
+            let idx = 0;
+            if (!isMostRecentOrCurrent) {
+              const containerIdx = expContainers.findIndex((c) => c.contains(input));
+              idx = containerIdx !== -1 ? containerIdx : startDateCount;
+              startDateCount++;
+            }
+            const exp = workExps[idx];
+            if (exp) valueToSet = exp.startMonth && exp.startYear ? `${exp.startMonth}/${exp.startYear}` : exp.startYear || '2024';
+          }
+          // End Date / Month
+          else if (combinedKey.includes('end date') || combinedKey.includes('end month') || combinedKey.includes('to month') || combinedKey.includes('to date') || (combinedKey.includes('to') && (combinedKey.includes('work') || combinedKey.includes('job') || combinedKey.includes('date')))) {
+            let idx = 0;
+            if (!isMostRecentOrCurrent) {
+              const containerIdx = expContainers.findIndex((c) => c.contains(input));
+              idx = containerIdx !== -1 ? containerIdx : endDateCount;
+              endDateCount++;
+            }
+            const exp = workExps[idx];
+            if (exp) valueToSet = exp.currentlyWorkHere ? 'Present' : (exp.endMonth && exp.endYear ? `${exp.endMonth}/${exp.endYear}` : exp.endYear || 'Present');
+          }
+          // Description / Responsibilities
+          else if ((combinedKey.includes('role description') || combinedKey.includes('responsibilities') || combinedKey.includes('job description') || combinedKey.includes('duties') || combinedKey.includes('summary')) && (input.tagName === 'TEXTAREA' || input.isContentEditable)) {
+            let idx = 0;
+            if (!isMostRecentOrCurrent) {
+              const containerIdx = expContainers.findIndex((c) => c.contains(input));
+              idx = containerIdx !== -1 ? containerIdx : descCount;
+              descCount++;
+            }
+            const exp = workExps[idx];
+            if (exp) valueToSet = exp.description;
           }
         }
-      }
 
-      if (valueToSet !== null && valueToSet !== undefined) {
-        if (input.tagName === 'SELECT') {
-          if (fillSelectOption(input, String(valueToSet))) filledCount++;
-        } else {
-          setNativeInputValue(input, String(valueToSet));
-          input.classList.add('jr-autofilled-field');
-          filledCount++;
+        // Check Dynamic Custom Personal Contact Fields
+        if (!valueToSet && activeProfile.customFields && activeProfile.customFields.length > 0) {
+          for (const cf of activeProfile.customFields) {
+            const cfLabel = (cf.label || '').toLowerCase().trim();
+            if (cfLabel && (combinedKey.includes(cfLabel) || labelText.includes(cfLabel))) {
+              valueToSet = cf.value;
+              break;
+            }
+          }
         }
+
+        // Check QA Knowledge Base
+        if (!valueToSet && activeProfile.knowledgeBase && activeProfile.knowledgeBase.length > 0) {
+          for (const kb of activeProfile.knowledgeBase) {
+            const pattern = (kb.questionPattern || '').toLowerCase();
+            if (pattern && (labelText.includes(pattern) || combinedKey.includes(pattern))) {
+              valueToSet = kb.answer;
+              break;
+            }
+          }
+        }
+
+        if (valueToSet !== null && valueToSet !== undefined) {
+          if (input.tagName === 'SELECT') {
+            if (fillSelectOption(input, String(valueToSet))) filledCount++;
+          } else {
+            setNativeInputValue(input, String(valueToSet));
+            input.classList.add('jr-autofilled-field');
+            filledCount++;
+          }
+        }
+      } catch (err) {
+        console.warn('Error processing input during autofill:', err);
       }
     });
 
     // 2. Fill Radio Groups & Fieldsets (Sponsorship, Authorization, EEO, Custom Questions)
-    const radioContainers = container.querySelectorAll(
-      'fieldset, div.fb-dash-form-element, div.jobs-easy-apply-form-section__group, div[role="radiogroup"], div.form-group, div.form-entry, div.question-container, div.application-question, div.form-field, div[data-automation-id*="question"], div[data-automation-id*="formField"], div.section-field, .artdeco-form__item, .jobs-easy-apply-form-element'
-    );
+    const radioContainers = Array.from(document.querySelectorAll(
+      'fieldset, div.fb-dash-form-element, div.jobs-easy-apply-form-section__group, div[role="radiogroup"], div.form-group, div.form-entry, div.question-container, div.application-question, div.form-field, div[data-automation-id*="question"], div[data-automation-id*="formField"], div.section-field, .artdeco-form__item, .jobs-easy-apply-form-element, div[data-test-form-element]'
+    )).filter((c) => !c.closest('#jr-autofill-panel'));
 
     radioContainers.forEach((group) => {
-      // If override is disabled, check if group already has a checked option
-      if (!shouldOverride) {
-        const existingChecked = group.querySelector('input[type="radio"]:checked, input[type="checkbox"]:checked, [role="radio"][aria-checked="true"]');
-        if (existingChecked) return;
-      }
+      try {
+        // If override is disabled, check if group already has a checked option
+        if (!shouldOverride) {
+          const existingChecked = group.querySelector('input[type="radio"]:checked, input[type="checkbox"]:checked, [role="radio"][aria-checked="true"]');
+          if (existingChecked) return;
+        }
 
-      const questionText = getQuestionTextForGroup(group).toLowerCase();
-      if (!questionText) return;
+        const questionText = getQuestionTextForGroup(group).toLowerCase();
+        if (!questionText) return;
 
-      let targetChoice = null;
+        let targetChoice = null;
 
-      // Sponsorship Question (Checked FIRST to avoid "employment eligibility" overlap)
-      if (
-        questionText.includes('sponsorship') ||
-        questionText.includes('require sponsorship') ||
-        questionText.includes('immigration-related') ||
-        questionText.includes('sponsorship for employment') ||
-        questionText.includes('require visa')
-      ) {
-        targetChoice = activeProfile.sponsorshipRequired || 'No';
-      }
-      // Legal Work Authorization Question
-      else if (
-        questionText.includes('legally authorized') ||
-        questionText.includes('authorized to work') ||
-        questionText.includes('country/region you are applying') ||
-        questionText.includes('right to work') ||
-        questionText.includes('lawful permanent resident') ||
-        questionText.includes('legally eligible')
-      ) {
-        targetChoice = activeProfile.legallyAuthorized || 'Yes';
-      }
-      // Transgender / Gender Identity Question
-      else if (questionText.includes('transgender') || questionText.includes('gender identity')) {
-        targetChoice = activeProfile.transgenderStatus || 'Decline to self-identify';
-      }
-      // Sexual Orientation Question
-      else if (questionText.includes('sexual orientation') || questionText.includes('sexual identity') || questionText.includes('lgbtq')) {
-        targetChoice = activeProfile.sexualOrientation || 'Decline to self-identify';
-      }
-      // Gender Question
-      else if (questionText.includes('gender') || questionText.includes('sex identity')) {
-        targetChoice = activeProfile.gender || 'Decline to self-identify';
-      }
-      // Race / Ethnicity Question
-      else if (
-        questionText.includes('ethnicity') ||
-        questionText.includes('race') ||
-        questionText.includes('ethnic background') ||
-        questionText.includes('hispanic or latino')
-      ) {
-        targetChoice = activeProfile.ethnicity || 'Decline to self-identify';
-      }
-      // Veteran Status Question
-      else if (questionText.includes('veteran') || questionText.includes('military status')) {
-        targetChoice = activeProfile.veteranStatus || 'I am not a protected veteran';
-      }
-      // Disability Status Question
-      else if (questionText.includes('disability') || questionText.includes('handicap')) {
-        targetChoice = activeProfile.disabilityStatus || 'No, I don\'t have a disability';
-      }
-      // Relocation Question
-      else if (questionText.includes('relocation') || questionText.includes('relocate') || questionText.includes('willing to move')) {
-        targetChoice = activeProfile.relocation || 'Yes';
-      }
-      // Standard Affirmative Questions (Background Check, Drug Test, Age 18+)
-      else if (
-        questionText.includes('18 years of age') ||
-        questionText.includes('background check') ||
-        questionText.includes('drug test') ||
-        questionText.includes('truthful') ||
-        questionText.includes('certify')
-      ) {
-        targetChoice = 'Yes';
-      }
-      // Standard Negative Questions (Felony conviction, fired)
-      else if (questionText.includes('felony') || questionText.includes('convicted of a crime')) {
-        targetChoice = 'No';
-      }
+        // Sponsorship Question (Checked FIRST to avoid "employment eligibility" overlap)
+        if (
+          questionText.includes('sponsorship') ||
+          questionText.includes('require sponsorship') ||
+          questionText.includes('immigration-related') ||
+          questionText.includes('sponsorship for employment') ||
+          questionText.includes('require visa')
+        ) {
+          targetChoice = activeProfile.sponsorshipRequired || 'No';
+        }
+        // Legal Work Authorization Question
+        else if (
+          questionText.includes('legally authorized') ||
+          questionText.includes('authorized to work') ||
+          questionText.includes('country/region you are applying') ||
+          questionText.includes('right to work') ||
+          questionText.includes('lawful permanent resident') ||
+          questionText.includes('legally eligible')
+        ) {
+          targetChoice = activeProfile.legallyAuthorized || 'Yes';
+        }
+        // Transgender / Gender Identity Question
+        else if (questionText.includes('transgender') || questionText.includes('gender identity')) {
+          targetChoice = activeProfile.transgenderStatus || 'Decline to self-identify';
+        }
+        // Sexual Orientation Question
+        else if (questionText.includes('sexual orientation') || questionText.includes('sexual identity') || questionText.includes('lgbtq')) {
+          targetChoice = activeProfile.sexualOrientation || 'Decline to self-identify';
+        }
+        // Gender Question
+        else if (questionText.includes('gender') || questionText.includes('sex identity')) {
+          targetChoice = activeProfile.gender || 'Decline to self-identify';
+        }
+        // Race / Ethnicity Question
+        else if (
+          questionText.includes('ethnicity') ||
+          questionText.includes('race') ||
+          questionText.includes('ethnic background') ||
+          questionText.includes('hispanic or latino')
+        ) {
+          targetChoice = activeProfile.ethnicity || 'Decline to self-identify';
+        }
+        // Veteran Status Question
+        else if (questionText.includes('veteran') || questionText.includes('military status')) {
+          targetChoice = activeProfile.veteranStatus || 'I am not a protected veteran';
+        }
+        // Disability Status Question
+        else if (questionText.includes('disability') || questionText.includes('handicap')) {
+          targetChoice = activeProfile.disabilityStatus || 'No, I don\'t have a disability';
+        }
+        // Relocation Question
+        else if (questionText.includes('relocation') || questionText.includes('relocate') || questionText.includes('willing to move')) {
+          targetChoice = activeProfile.relocation || 'Yes';
+        }
+        // Standard Affirmative Questions (Background Check, Drug Test, Age 18+)
+        else if (
+          questionText.includes('18 years of age') ||
+          questionText.includes('background check') ||
+          questionText.includes('drug test') ||
+          questionText.includes('truthful') ||
+          questionText.includes('certify')
+        ) {
+          targetChoice = 'Yes';
+        }
+        // Standard Negative Questions (Felony conviction, fired)
+        else if (questionText.includes('felony') || questionText.includes('convicted of a crime')) {
+          targetChoice = 'No';
+        }
 
-      // Check QA Knowledge Base if no standard field matched
-      if (!targetChoice && activeProfile.knowledgeBase) {
-        for (const kb of activeProfile.knowledgeBase) {
-          const pattern = (kb.questionPattern || '').toLowerCase();
-          if (pattern && questionText.includes(pattern)) {
-            targetChoice = kb.answer;
-            break;
+        // Check QA Knowledge Base if no standard field matched
+        if (!targetChoice && activeProfile.knowledgeBase) {
+          for (const kb of activeProfile.knowledgeBase) {
+            const pattern = (kb.questionPattern || '').toLowerCase();
+            if (pattern && questionText.includes(pattern)) {
+              targetChoice = kb.answer;
+              break;
+            }
           }
         }
-      }
 
-      if (targetChoice) {
-        if (selectRadioInGroup(group, targetChoice)) {
-          filledCount++;
+        if (targetChoice) {
+          if (selectRadioInGroup(group, targetChoice)) {
+            filledCount++;
+          }
         }
+      } catch (err) {
+        console.warn('Error processing radio group during autofill:', err);
       }
     });
 
     if (statusEl) {
       if (filledCount > 0) {
         statusEl.innerText = `✅ Auto-filled ${filledCount} fields & choices!`;
+      } else if (skippedFilledCount > 0) {
+        statusEl.innerText = `ℹ️ ${skippedFilledCount} field(s) already filled. Check "Override existing form values" to replace.`;
       } else {
         statusEl.innerText = `ℹ️ No matching unfilled fields found on page.`;
       }
@@ -858,20 +876,46 @@
 
   // Find label text associated with input
   function getLabelForInput(input) {
+    if (!input) return '';
+
     if (input.id) {
-      const labelEl = document.querySelector(`label[for="${input.id}"]`);
-      if (labelEl) return labelEl.textContent.trim();
+      try {
+        const escapedId = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(input.id) : input.id.replace(/([^\w-])/g, '\\$1');
+        const labelEl = document.querySelector(`label[for="${escapedId}"]`);
+        if (labelEl && labelEl.textContent) return labelEl.textContent.trim();
+      } catch (e) {
+        // Fallback: iterate labels
+        const labels = document.getElementsByTagName('label');
+        for (let i = 0; i < labels.length; i++) {
+          if (labels[i].getAttribute('for') === input.id) {
+            return labels[i].textContent.trim();
+          }
+        }
+      }
     }
+
     const parentLabel = input.closest('label');
-    if (parentLabel) return parentLabel.textContent.trim();
-
-    const parentGroup = input.closest('.fb-dash-form-element, .jobs-easy-apply-form-element, .artdeco-text-input, .form-group, .input-group');
-    if (parentGroup) {
-      const label = parentGroup.querySelector('label, .fb-dash-form-element__label, .form-label');
-      if (label) return label.textContent.trim();
+    if (parentLabel && parentLabel.textContent) {
+      return parentLabel.textContent.trim();
     }
 
-    return input.getAttribute('aria-label') || input.placeholder || '';
+    const parentGroup = input.closest('.fb-dash-form-element, .jobs-easy-apply-form-element, .artdeco-text-input, .form-group, .input-group, [data-automation-id], .form-field, .form-entry, .question-container');
+    if (parentGroup) {
+      try {
+        const label = parentGroup.querySelector('label, .fb-dash-form-element__label, .form-label, span.label, p.label, legend');
+        if (label && label.textContent) return label.textContent.trim();
+      } catch (e) {}
+    }
+
+    const ariaLabelledBy = input.getAttribute('aria-labelledby');
+    if (ariaLabelledBy) {
+      try {
+        const labelEl = document.getElementById(ariaLabelledBy);
+        if (labelEl && labelEl.textContent) return labelEl.textContent.trim();
+      } catch (e) {}
+    }
+
+    return input.getAttribute('aria-label') || input.placeholder || input.name || input.id || '';
   }
 
   // Listen for messages from extension popup

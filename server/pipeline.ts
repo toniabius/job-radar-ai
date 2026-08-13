@@ -40,6 +40,39 @@ export function setIsPipelineRunning(running: boolean): void {
   }
 }
 
+export function syncWorkingInventoryWithDisk(workingInventory: Job[]): Job[] {
+  try {
+    const activePid = getActiveProfileId();
+    const diskJobs = loadJobsDB(activePid);
+    const diskMap = new Map(diskJobs.map((j) => [j.id, j]));
+    const diskUrls = new Set(diskJobs.map((j) => j.url));
+
+    const synced: Job[] = [];
+    for (const job of workingInventory) {
+      if (job.id && diskMap.has(job.id)) {
+        const diskJob = diskMap.get(job.id)!;
+        synced.push({
+          ...job,
+          applied: diskJob.applied ?? job.applied,
+          applied_date: diskJob.applied_date ?? job.applied_date,
+          status: diskJob.status ?? job.status,
+          score: diskJob.score ?? job.score,
+          match_level: diskJob.match_level ?? job.match_level,
+          summary: diskJob.summary ?? job.summary,
+          reasons: diskJob.reasons ?? job.reasons,
+          missing_skills: diskJob.missing_skills ?? job.missing_skills,
+          company_size: diskJob.company_size ?? job.company_size,
+        });
+      } else if (!job.id && !diskUrls.has(job.url)) {
+        synced.push(job);
+      }
+    }
+    return synced;
+  } catch (e) {
+    return workingInventory;
+  }
+}
+
 export function appendPipelineLog(stage: PipelineLog["stage"], message: string, details?: string): void {
   const entry: PipelineLog = {
     id: Math.random().toString(36).substring(7),
@@ -178,6 +211,7 @@ export async function runPipeline(
       `\nActive Enabled Companies (${activeCompanies.length}): ${activeCompanies.length > 0 ? activeCompanies.map((c) => c.name).join(", ") : "None (Open Web Search Mode - searching all target jobs in area)"}` +
       (disabledCompanies.length > 0 ? `\nDisabled/Bypassed Companies (${disabledCompanies.length}): ${disabledCompanies.map((c) => c.name).join(", ")} (${isCompanyFilteringEnabled ? "Disabled in list" : "Bypassed because section is disabled"})` : "") +
       `\nIgnored Companies Filter: ${isIgnoredCompaniesEnabled ? "Enabled" : "Disabled"} (${ignoredCompanies.length} company/companies ignored${ignoredCompanies.length > 0 ? `: [${ignoredCompanies.join(", ")}]` : ""})` +
+      `\nMinimum Company Headcount Filter: ${config.enable_min_company_size && config.min_company_size && config.min_company_size > 0 ? `${config.min_company_size.toLocaleString()} employees required (strictly ignoring smaller companies via API lookup)` : "Disabled (No minimum size limit)"}` +
       `\nTarget Search Roles (${targetRoles.length}): ${targetRoles.join(", ")}` +
       `\nTarget Locations: ${preferredLocs.length > 0 ? preferredLocs.join(", ") : "Any"}`
     );
@@ -234,102 +268,113 @@ export async function runPipeline(
 
     // Callback to process, evaluate with AI, and persist jobs IMMEDIATELY as each batch is scraped
     const onBatchFetched = async (rawBatch: Omit<Job, 'id'>[]) => {
-      if (isCancelled()) return;
-      if (!rawBatch || rawBatch.length === 0) return;
+      try {
+        if (isCancelled()) return;
+        if (!rawBatch || rawBatch.length === 0) return;
 
-      const ts = Date.now().toString().slice(-5);
-      const batchNormalizedJobs: Job[] = rawBatch.map((c, idx) => {
-        const jobIdM = c.url.match(/\/view\/(\d+)\//);
-        const jobId = jobIdM ? jobIdM[1] : `${ts}-${idx}`;
-        const id = `li-${jobId}`;
+        const ts = Date.now().toString().slice(-5);
+        const batchNormalizedJobs: Job[] = rawBatch.map((c, idx) => {
+          const jobIdM = c.url.match(/\/view\/(\d+)\//);
+          const jobId = jobIdM ? jobIdM[1] : `${ts}-${idx}`;
+          const id = `li-${jobId}`;
 
-        const prev = workingInventory.find((j) => j.id === id || j.url === c.url);
+          const prev = workingInventory.find((j) => j.id === id || j.url === c.url);
 
-        const isPlaceholderDescription = (desc?: string) =>
-          !desc || desc.includes("Key requirements include software engineering, system architecture");
+          const isPlaceholderDescription = (desc?: string) =>
+            !desc || desc.includes("Key requirements include software engineering, system architecture");
 
-        if (prev && prev.score !== undefined && !isPlaceholderDescription(prev.description)) {
+          if (prev && prev.score !== undefined && !isPlaceholderDescription(prev.description)) {
+            return {
+              ...c,
+              id,
+              score: prev.score,
+              match_level: prev.match_level,
+              summary: prev.summary,
+              reasons: prev.reasons,
+              missing_skills: prev.missing_skills,
+              recommended_actions: prev.recommended_actions,
+              processed_at: prev.processed_at,
+              status: prev.status || "evaluated",
+            };
+          }
+
           return {
             ...c,
             id,
-            score: prev.score,
-            match_level: prev.match_level,
-            summary: prev.summary,
-            reasons: prev.reasons,
-            missing_skills: prev.missing_skills,
-            recommended_actions: prev.recommended_actions,
-            processed_at: prev.processed_at,
-            status: prev.status || "evaluated",
           };
-        }
+        });
 
-        return {
-          ...c,
-          id,
-        };
-      });
+        totalNewlyScannedJobs += batchNormalizedJobs.length;
 
-      totalNewlyScannedJobs += batchNormalizedJobs.length;
+        // Filter jobs in this batch that need Gemini evaluation
+        const batchNeedingEval = batchNormalizedJobs.filter(
+          (j) => j.status === "new" || j.score === undefined
+        );
 
-      // Filter jobs in this batch that need Gemini evaluation
-      const batchNeedingEval = batchNormalizedJobs.filter(
-        (j) => j.status === "new" || j.score === undefined
-      );
+        if (config.auto_evaluate && batchNeedingEval.length > 0 && !isCancelled()) {
+          const selectedModel = config.gemini_model || "gemini-3.1-flash-lite";
+          const totalToEval = batchNeedingEval.length;
+          addLog("GEMINI_AI", `[PARALLEL EVAL] Evaluating batch of ${totalToEval} job(s) with Gemini AI (${selectedModel})...`);
 
-      if (config.auto_evaluate && batchNeedingEval.length > 0 && !isCancelled()) {
-        const selectedModel = config.gemini_model || "gemini-3.1-flash-lite";
-        const totalToEval = batchNeedingEval.length;
-        addLog("GEMINI_AI", `[PARALLEL EVAL] Evaluating batch of ${totalToEval} job(s) with Gemini AI (${selectedModel})...`);
+          const BATCH_SIZE = 5;
+          for (let i = 0; i < batchNeedingEval.length; i += BATCH_SIZE) {
+            if (isCancelled()) break;
+            const chunk = batchNeedingEval.slice(i, i + BATCH_SIZE);
+            const chunkTitles = chunk.map((j) => `"${j.title}" @ ${j.company}`).join(", ");
 
-        const BATCH_SIZE = 5;
-        for (let i = 0; i < batchNeedingEval.length; i += BATCH_SIZE) {
-          if (isCancelled()) break;
-          const chunk = batchNeedingEval.slice(i, i + BATCH_SIZE);
-          const chunkTitles = chunk.map((j) => `"${j.title}" @ ${j.company}`).join(", ");
+            addLog("GEMINI_AI", `Evaluating: ${chunkTitles}...`);
 
-          addLog("GEMINI_AI", `Evaluating (${i + 1}-${Math.min(i + chunk.length, totalToEval)}/${totalToEval}): ${chunkTitles}...`);
+            try {
+              const evalResults = await batchEvaluateJobsWithGemini(chunk, resume.content, config);
 
-          const evalResults = await batchEvaluateJobsWithGemini(chunk, resume.content, config);
+              for (const resItem of evalResults) {
+                const job = chunk.find((j) => j.id === resItem.jobId);
+                if (job) {
+                  job.score = resItem.evaluation.score;
+                  job.match_level = resItem.evaluation.match_level;
+                  job.summary = resItem.evaluation.summary;
+                  job.reasons = resItem.evaluation.reasons;
+                  job.missing_skills = resItem.evaluation.missing_skills;
+                  job.recommended_actions = resItem.evaluation.recommended_actions;
+                  job.model_used = resItem.evaluation.model_used;
+                  job.processed_at = new Date().toISOString();
+                  job.status = "evaluated";
+                  evaluatedJobsCount++;
 
-          for (const resItem of evalResults) {
-            const job = chunk.find((j) => j.id === resItem.jobId);
-            if (job) {
-              job.score = resItem.evaluation.score;
-              job.match_level = resItem.evaluation.match_level;
-              job.summary = resItem.evaluation.summary;
-              job.reasons = resItem.evaluation.reasons;
-              job.missing_skills = resItem.evaluation.missing_skills;
-              job.recommended_actions = resItem.evaluation.recommended_actions;
-              job.model_used = resItem.evaluation.model_used;
-              job.processed_at = new Date().toISOString();
-              job.status = "evaluated";
-              evaluatedJobsCount++;
-
-              addLog("GEMINI_AI", `[EVAL DONE] "${job.title}" @ ${job.company} -> Score: ${job.score}/100 [${job.match_level}]`);
+                  addLog("GEMINI_AI", `[EVAL DONE] "${job.title}" @ ${job.company} -> Score: ${job.score}/100 [${job.match_level}]`);
+                }
+              }
+            } catch (chunkErr: any) {
+              addLog("ERROR", `Failed to evaluate chunk: ${chunkErr?.message || chunkErr}`);
             }
           }
         }
-      }
 
-      // Merge evaluated batch into workingInventory
-      for (const bJob of batchNormalizedJobs) {
-        const existingIdx = workingInventory.findIndex((j) => j.id === bJob.id || j.url === bJob.url);
-        if (existingIdx >= 0) {
-          workingInventory[existingIdx] = bJob;
-        } else {
-          workingInventory.unshift(bJob);
+        // Merge evaluated batch into workingInventory
+        for (const bJob of batchNormalizedJobs) {
+          const existingIdx = workingInventory.findIndex((j) => j.id === bJob.id || j.url === bJob.url);
+          if (existingIdx >= 0) {
+            workingInventory[existingIdx] = bJob;
+          } else {
+            workingInventory.unshift(bJob);
+          }
         }
-      }
 
-      // Record progress to disk immediately!
-      saveJobsDB(workingInventory);
-      try {
-        generateMarkdownReport(workingInventory, undefined, true);
-      } catch (e) {
-        // ignore
-      }
+        // Sync and record progress to disk immediately!
+        const syncedBatch = syncWorkingInventoryWithDisk(workingInventory);
+        workingInventory.length = 0;
+        workingInventory.push(...syncedBatch);
+        saveJobsDB(workingInventory);
+        try {
+          generateMarkdownReport(workingInventory, undefined, false);
+        } catch (e) {
+          // ignore
+        }
 
-      addLog("NORMALIZER", `[PROGRESS SAVED] Recorded ${batchNormalizedJobs.length} posting(s) to database (Total inventory: ${workingInventory.length}).`);
+        addLog("NORMALIZER", `[PROGRESS SAVED] Recorded ${batchNormalizedJobs.length} posting(s) to database (Total inventory: ${workingInventory.length}).`);
+      } catch (err: any) {
+        addLog("ERROR", `Error processing fetched batch: ${err?.message || err}`);
+      }
     };
 
     const scanData = await fetchLiveLinkedInJobs(
@@ -342,7 +387,8 @@ export async function runPipeline(
       isCancelled,
       isStopFetchingRequested,
       addLog,
-      onBatchFetched
+      onBatchFetched,
+      config.enable_min_company_size ? config.min_company_size : 0
     );
     const liveCandidates = scanData.jobs;
     const totalScannedCount = scanData.totalScanned;
@@ -385,12 +431,38 @@ export async function runPipeline(
 
     if (isCancelled()) {
       isPipelineRunning = false;
-      // Save whatever progress we have so far
+      const syncedFinal = syncWorkingInventoryWithDisk(workingInventory);
+      workingInventory.length = 0;
+      workingInventory.push(...syncedFinal);
       saveJobsDB(workingInventory);
-      currentPipelineResult = { cancelled: true, summary: "Scan cancelled by user. Progress saved up to cancellation point." };
-      return { success: false, cancelled: true, summary: "Scan cancelled by user. Progress saved up to cancellation point.", logs };
+      generateMarkdownReport(workingInventory, undefined, true);
+
+      const cancelSummary = `Scan stopped by user. Current progress and report saved (${workingInventory.length} total jobs in inventory).`;
+      currentPipelineResult = {
+        success: true,
+        cancelled: true,
+        summary: cancelSummary,
+        newJobsCount: totalNewlyScannedJobs,
+        evaluatedCount: evaluatedJobsCount,
+        totalJobs: workingInventory.length,
+        totalScanned: totalScannedCount,
+      };
+      return {
+        success: true,
+        cancelled: true,
+        summary: cancelSummary,
+        logs,
+        newJobsCount: totalNewlyScannedJobs,
+        evaluatedCount: evaluatedJobsCount,
+        totalJobs: workingInventory.length,
+        totalScanned: totalScannedCount,
+        reportPath: "output/report.md",
+      };
     }
 
+    const syncedFinal = syncWorkingInventoryWithDisk(workingInventory);
+    workingInventory.length = 0;
+    workingInventory.push(...syncedFinal);
     saveJobsDB(workingInventory);
 
     addLog("REPORT", "Generating Markdown report output/report.md...");

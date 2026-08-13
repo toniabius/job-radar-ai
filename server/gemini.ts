@@ -249,3 +249,86 @@ function extractBasicCandidateProfileRegex(rawText: string): any {
   };
 }
 
+export async function fetchCompanyHeadcountWithAI(
+  companyName: string,
+  jobDescription?: string
+): Promise<{
+  employeeCount: number | null;
+  minCount?: number;
+  maxCount?: number;
+  sizeText: string;
+  source: 'job_description' | 'ai_api' | 'unknown';
+}> {
+  if (!companyName || !companyName.trim()) {
+    return { employeeCount: null, sizeText: "Unknown Company", source: "unknown" };
+  }
+
+  // 1. Try regex extraction if job description exists
+  if (jobDescription) {
+    const plusMatch = jobDescription.match(/(\d{1,3}(?:,\d{3})*|\d+)\s*\+\s*employees?/i);
+    if (plusMatch) {
+      const minVal = parseInt(plusMatch[1].replace(/,/g, ""), 10);
+      return { employeeCount: minVal, minCount: minVal, maxCount: Infinity, sizeText: plusMatch[0], source: 'job_description' };
+    }
+    const rangeMatch = jobDescription.match(/(\d{1,3}(?:,\d{3})*|\d+)\s*[-–—]\s*(\d{1,3}(?:,\d{3})*|\d+)\s*employees?/i);
+    if (rangeMatch) {
+      const minVal = parseInt(rangeMatch[1].replace(/,/g, ""), 10);
+      const maxVal = parseInt(rangeMatch[2].replace(/,/g, ""), 10);
+      return { employeeCount: maxVal, minCount: minVal, maxCount: maxVal, sizeText: rangeMatch[0], source: 'job_description' };
+    }
+  }
+
+  // 2. Query Gemini API for company size lookup
+  if (hasValidApiKey()) {
+    try {
+      const ai = getGeminiClient();
+      const prompt = `You are an enterprise company database and HR research assistant.
+Task: Determine the global employee headcount / company size for "${companyName.trim()}".
+${jobDescription ? `Job Posting Excerpt: "${jobDescription.slice(0, 1000)}"` : ''}
+
+Return ONLY a valid JSON object matching this schema:
+{
+  "employeeCount": number (estimated numeric total headcount, e.g. 50, 250, 1000, 10000, 50000),
+  "minCount": number (minimum headcount in range, e.g. 500),
+  "maxCount": number (maximum headcount in range, e.g. 1000),
+  "sizeText": "string (readable size e.g. '1,000-5,000 employees' or '10,000+ employees' or '50-200 employees')"
+}`;
+
+      for (const model of ALL_GEMINI_FALLBACK_MODELS) {
+        try {
+          await enforceGeminiRateLimit(model);
+          const res = await ai.models.generateContent({
+            model,
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json",
+            }
+          });
+          const text = (res.text || "").trim();
+          if (text) {
+            const cleanJson = text.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+            const parsed = JSON.parse(cleanJson);
+            if (parsed && typeof parsed === "object") {
+              const empCount = typeof parsed.employeeCount === "number" ? parsed.employeeCount : (parsed.maxCount || parsed.minCount || null);
+              const txt = parsed.sizeText || (empCount ? `${empCount.toLocaleString()} employees` : "Unknown");
+              return {
+                employeeCount: empCount,
+                minCount: parsed.minCount || empCount,
+                maxCount: parsed.maxCount || empCount,
+                sizeText: txt,
+                source: "ai_api"
+              };
+            }
+          }
+        } catch (mErr) {
+          console.warn(`[COMPANY SIZE API] Model ${model} failed, trying fallback...`, mErr);
+        }
+      }
+    } catch (err) {
+      console.warn("[COMPANY SIZE API] Gemini lookup failed:", err);
+    }
+  }
+
+  return { employeeCount: null, sizeText: "Unspecified Size", source: "unknown" };
+}
+

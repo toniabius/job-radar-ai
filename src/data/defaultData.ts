@@ -53,7 +53,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   time_filter_unit: 'hours',
   auto_evaluate: true,
   gemini_model: 'gemini-3.1-flash-lite',
-  min_company_size: 0,
+  min_company_size: 50,
+  enable_min_company_size: false,
   max_jobs_per_company: 5,
   hard_blockers: '',
 };

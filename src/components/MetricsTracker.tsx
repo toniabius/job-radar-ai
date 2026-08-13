@@ -15,6 +15,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { Job } from '../types';
+import { getLocalDateString, getJobAppliedLocalDate, formatDisplayDate } from '../utils/dateUtils';
 
 interface MetricsTrackerProps {
   jobs: Job[];
@@ -33,7 +34,7 @@ export const MetricsTracker: React.FC<MetricsTrackerProps> = ({
   const [statusFilter, setStatusFilter] = useState<'all' | 'today' | 'strong'>('all');
 
   // Dates computation
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getLocalDateString(new Date());
   
   // Calculate applied jobs
   const appliedJobs = jobs.filter((j) => j.applied || j.status === 'saved');
@@ -41,8 +42,7 @@ export const MetricsTracker: React.FC<MetricsTrackerProps> = ({
   // Applied Today
   const appliedTodayJobs = jobs.filter((j) => {
     if (!j.applied) return false;
-    if (!j.applied_date) return true; // default if marked applied today
-    return j.applied_date.startsWith(todayStr);
+    return getJobAppliedLocalDate(j) === todayStr;
   });
   const appliedTodayCount = appliedTodayJobs.length;
 
@@ -51,13 +51,12 @@ export const MetricsTracker: React.FC<MetricsTrackerProps> = ({
   for (let i = selectedDaysFilter - 1; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    const dateStr = d.toISOString().split('T')[0];
+    const dateStr = getLocalDateString(d);
     const monthDayLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
     const countForDay = jobs.filter((j) => {
       if (!j.applied) return false;
-      if (!j.applied_date) return i === 0;
-      return j.applied_date.startsWith(dateStr);
+      return getJobAppliedLocalDate(j) === dateStr;
     }).length;
 
     dailyHistory.push({ dateStr, label: monthDayLabel, count: countForDay });
@@ -98,7 +97,7 @@ export const MetricsTracker: React.FC<MetricsTrackerProps> = ({
     const updated: Job = {
       ...job,
       applied: isNowApplied,
-      applied_date: isNowApplied ? new Date().toISOString() : undefined
+      applied_date: isNowApplied ? getLocalDateString(new Date()) : undefined
     };
     onUpdateJobStatus(updated);
   };
@@ -106,7 +105,7 @@ export const MetricsTracker: React.FC<MetricsTrackerProps> = ({
   // Filtered recent jobs list
   const filteredJobsList = jobs.filter((j) => {
     if (statusFilter === 'today') {
-      return j.applied && (j.applied_date ? j.applied_date.startsWith(todayStr) : true);
+      return j.applied && getJobAppliedLocalDate(j) === todayStr;
     }
     if (statusFilter === 'strong') {
       return (j.score || 0) >= minimumScoreThreshold;
@@ -490,8 +489,8 @@ export const MetricsTracker: React.FC<MetricsTrackerProps> = ({
                       </div>
                       <div className="flex items-center space-x-3 text-[11px] text-slate-500 mt-0.5">
                         <span>📍 {job.location || 'Remote / Unspecified'}</span>
-                        {job.applied && job.applied_date && (
-                          <span>🗓️ Applied on {new Date(job.applied_date).toLocaleDateString()}</span>
+                        {job.applied && (
+                          <span>🗓️ Applied on {formatDisplayDate(job.applied_date || job.first_seen)}</span>
                         )}
                       </div>
                     </div>

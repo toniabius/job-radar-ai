@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Database, Search, RefreshCw, Trash2, RotateCcw, ExternalLink, Sparkles, ArrowUpDown, ArrowUp, ArrowDown, XCircle } from 'lucide-react';
+import { Database, Search, RefreshCw, Trash2, RotateCcw, ExternalLink, Sparkles, ArrowUpDown, ArrowUp, ArrowDown, XCircle, CheckSquare, Check } from 'lucide-react';
 import { Job } from '../types';
 import { ensureAbsoluteUrl } from '../utils/url';
+import { formatDisplayDate } from '../utils/dateUtils';
 
 interface DatabaseViewerProps {
   jobs: Job[];
@@ -12,6 +13,7 @@ interface DatabaseViewerProps {
   onDeleteSelectedJobs?: (ids: string[]) => void;
   onDeleteBelowThreshold?: () => void;
   onToggleApplied: (job: Job, applied: boolean) => void;
+  onBulkToggleApplied?: (ids: string[], applied: boolean) => void;
   onEvaluateJob?: (job: Job) => void;
   onEvaluateAllJobs?: (selectedJobIds?: string[]) => void;
   onEvaluateSelectedJobs?: (selectedJobIds: string[]) => void;
@@ -30,6 +32,7 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
   onDeleteSelectedJobs,
   onDeleteBelowThreshold,
   onToggleApplied,
+  onBulkToggleApplied,
   onEvaluateJob,
   onEvaluateAllJobs,
   onEvaluateSelectedJobs,
@@ -142,6 +145,16 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
     }
   };
 
+  const handleBulkMarkApplied = (applied: boolean) => {
+    if (selectedJobIds.length === 0) return;
+    if (onBulkToggleApplied) {
+      onBulkToggleApplied(selectedJobIds, applied);
+    } else {
+      const selectedSet = new Set(selectedJobIds);
+      jobs.filter((j) => selectedSet.has(j.id)).forEach((j) => onToggleApplied(j, applied));
+    }
+  };
+
   return (
     <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
       {/* Header */}
@@ -200,6 +213,20 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-3 text-xs">
+          <button
+            type="button"
+            onClick={handleSelectAllVisible}
+            className={`inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer border ${
+              selectedJobIds.length > 0
+                ? 'bg-amber-600 text-white border-amber-600 hover:bg-amber-700'
+                : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+            }`}
+            title="Toggle selection for all currently visible jobs in table"
+          >
+            <CheckSquare className="w-3.5 h-3.5 mr-1.5" />
+            {isAllVisibleSelected ? 'Deselect All' : `Bulk Select (${sortedJobs.length})`}
+          </button>
+
           <div className="flex items-center space-x-1.5">
             <span className="font-semibold text-slate-600">Sort By:</span>
             <select
@@ -240,11 +267,24 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
             </span>
             <span>job(s) ready for bulk actions.</span>
           </div>
-          <div className="flex items-center space-x-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => handleBulkMarkApplied(true)}
+              className="inline-flex items-center px-2.5 py-1 bg-emerald-700 hover:bg-emerald-600 text-white text-[11px] font-bold rounded cursor-pointer transition-colors shadow-2xs"
+            >
+              <Check className="w-3 h-3 mr-1 text-emerald-200" />
+              Mark Applied ({selectedJobIds.length})
+            </button>
+            <button
+              onClick={() => handleBulkMarkApplied(false)}
+              className="inline-flex items-center px-2.5 py-1 bg-slate-700 hover:bg-slate-600 text-white text-[11px] font-bold rounded cursor-pointer transition-colors shadow-2xs"
+            >
+              Mark Unapplied ({selectedJobIds.length})
+            </button>
             <button
               onClick={handleTriggerReEvaluate}
               disabled={isBulkEvaluating}
-              className="inline-flex items-center px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold rounded cursor-pointer transition-colors shadow-2xs disabled:opacity-50"
+              className="inline-flex items-center px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold rounded cursor-pointer transition-colors shadow-2xs disabled:opacity-50"
             >
               <Sparkles className="w-3 h-3 mr-1 text-amber-300" />
               Re-Evaluate ({selectedJobIds.length})
@@ -400,7 +440,7 @@ export const DatabaseViewer: React.FC<DatabaseViewerProps> = ({
                     <td className="px-4 py-3">
                       <label
                         className="inline-flex items-center space-x-1.5 cursor-pointer select-none"
-                        title={job.applied ? `Applied on ${job.applied_date || 'Today'}` : 'Mark as Applied'}
+                        title={job.applied ? `Applied on ${formatDisplayDate(job.applied_date || job.first_seen)}` : 'Mark as Applied'}
                       >
                         <input
                           type="checkbox"
