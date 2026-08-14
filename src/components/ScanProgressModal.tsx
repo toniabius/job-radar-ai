@@ -231,21 +231,9 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
           {/* Minimized Actions */}
           {isRunning && (
             <div className="flex items-center justify-between pt-1 border-t border-slate-800/80 text-[11px]">
-              {mode === 'scan' && isFetchingPhase ? (
-                <button
-                  type="button"
-                  disabled={isStoppingFetching}
-                  onClick={handleStopFetchingClick}
-                  className="text-amber-400 hover:text-amber-300 font-semibold flex items-center space-x-1 disabled:opacity-50"
-                >
-                  <Square className="w-3 h-3 fill-current" />
-                  <span>{isStoppingFetching ? 'Stopping...' : 'Stop Fetch & Evaluate'}</span>
-                </button>
-              ) : (
-                <span className="text-slate-400 font-mono text-[10px]">
-                  Scanning...
-                </span>
-              )}
+              <span className="text-slate-400 font-mono text-[10px]">
+                Scanning in progress...
+              </span>
 
               <button
                 type="button"
@@ -348,47 +336,6 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
         </div>
 
         <div className="p-6 space-y-5 overflow-y-auto flex-1">
-          {/* Live Progress Indicator (while running) */}
-          {isRunning && (
-            <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 border border-slate-700/90 rounded-xl p-4 text-xs text-white space-y-2.5 shadow-lg">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <Sparkles className="w-4 h-4 text-emerald-400" />
-                  <span className="font-bold text-sm text-slate-100">
-                    {evalProgress
-                      ? mode === 'reeval'
-                        ? 'AI Gemini Re-Evaluation Phase'
-                        : 'AI Gemini Evaluation Phase'
-                      : mode === 'reeval'
-                      ? 'Preparing Job Evaluation Batch'
-                      : 'Scanning Job Listings Phase'}
-                  </span>
-                </div>
-                {evalProgress && (
-                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-mono text-xs font-bold">
-                    {evalProgress.hasTotal
-                      ? `Evaluating ${evalProgress.current}/${evalProgress.total} (${evalProgress.percent}%)`
-                      : 'AI Evaluation Active'}
-                  </span>
-                )}
-              </div>
-
-              {evalProgress ? (
-                <p className="text-[11px] text-slate-300 font-mono truncate">
-                  <span className="text-emerald-400 font-semibold">
-                    {evalProgress.hasTotal ? `Evaluating (${evalProgress.current}/${evalProgress.total}):` : 'Evaluating:'}
-                  </span>{' '}
-                  {evalProgress.currentRole || 'In progress...'}
-                </p>
-              ) : (
-                <p className="text-[11px] text-slate-300 font-mono">
-                  <span className="text-blue-400 font-semibold">Status:</span>{' '}
-                  {mode === 'reeval' ? 'Initializing AI batch evaluation...' : 'Scanning jobs from LinkedIn...'}
-                </p>
-              )}
-            </div>
-          )}
-
           {/* Results Metrics (if completed) */}
           {!isRunning && scanResult && (
             <div className="bg-emerald-50 border border-emerald-200/80 rounded-xl p-4 text-xs space-y-3">
@@ -474,34 +421,7 @@ export const ScanProgressModal: React.FC<ScanProgressModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="bg-slate-50 border-t border-slate-200 px-6 py-3.5 flex justify-between items-center gap-3">
-          {isRunning && mode === 'scan' ? (
-            <button
-              type="button"
-              disabled={!isFetchingPhase || isStoppingFetching}
-              onClick={handleStopFetchingClick}
-              className={`px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center space-x-1.5 transition-all shadow-sm ${
-                isFetchingPhase && !isStoppingFetching
-                  ? 'bg-amber-600 hover:bg-amber-700 text-white cursor-pointer active:scale-95'
-                  : 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300/60'
-              }`}
-              title={
-                isFetchingPhase
-                  ? 'Stop fetching more postings and start AI Gemini evaluation immediately on retrieved jobs'
-                  : 'Fetching phase complete. AI Gemini evaluation is in progress.'
-              }
-            >
-              {isStoppingFetching ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Square className="w-3.5 h-3.5 fill-current text-amber-100" />
-              )}
-              <span>{isStoppingFetching ? 'Stopping Fetch...' : 'Stop Fetching & Evaluate'}</span>
-            </button>
-          ) : (
-            <div />
-          )}
-
+        <div className="bg-slate-50 border-t border-slate-200 px-6 py-3.5 flex justify-end items-center gap-3">
           <div className="flex items-center space-x-3">
             {isRunning ? (
               <button

@@ -20,6 +20,30 @@ export let stopFetchingRequested = false;
 export let currentPipelineLogs: PipelineLog[] = [];
 export let currentPipelineResult: any = null;
 
+export let activeWorkingInventory: Job[] | null = null;
+export let activeEvalQueue: Job[] | null = null;
+
+export function removeJobsFromPipelineInventory(deletedIds: string[]): void {
+  if (!deletedIds || deletedIds.length === 0) return;
+  const deleteSet = new Set(deletedIds);
+
+  if (activeWorkingInventory) {
+    for (let i = activeWorkingInventory.length - 1; i >= 0; i--) {
+      if (deleteSet.has(activeWorkingInventory[i].id)) {
+        activeWorkingInventory.splice(i, 1);
+      }
+    }
+  }
+
+  if (activeEvalQueue) {
+    for (let i = activeEvalQueue.length - 1; i >= 0; i--) {
+      if (deleteSet.has(activeEvalQueue[i].id)) {
+        activeEvalQueue.splice(i, 1);
+      }
+    }
+  }
+}
+
 export function setPipelineCancelled(cancelled: boolean): void {
   activePipelineCancelled = cancelled;
 }
@@ -45,7 +69,6 @@ export function syncWorkingInventoryWithDisk(workingInventory: Job[]): Job[] {
     const activePid = getActiveProfileId();
     const diskJobs = loadJobsDB(activePid);
     const diskMap = new Map(diskJobs.map((j) => [j.id, j]));
-    const diskUrls = new Set(diskJobs.map((j) => j.url));
 
     const synced: Job[] = [];
     for (const job of workingInventory) {
@@ -55,16 +78,15 @@ export function syncWorkingInventoryWithDisk(workingInventory: Job[]): Job[] {
           ...job,
           applied: diskJob.applied ?? job.applied,
           applied_date: diskJob.applied_date ?? job.applied_date,
-          status: diskJob.status ?? job.status,
-          score: diskJob.score ?? job.score,
-          match_level: diskJob.match_level ?? job.match_level,
-          summary: diskJob.summary ?? job.summary,
-          reasons: diskJob.reasons ?? job.reasons,
-          missing_skills: diskJob.missing_skills ?? job.missing_skills,
-          company_size: diskJob.company_size ?? job.company_size,
+          status: job.status !== "new" ? job.status : (diskJob.status ?? job.status),
+          score: job.score !== undefined ? job.score : diskJob.score,
+          match_level: job.match_level ?? diskJob.match_level,
+          summary: job.summary ?? diskJob.summary,
+          reasons: job.reasons ?? diskJob.reasons,
+          missing_skills: job.missing_skills ?? diskJob.missing_skills,
+          recommended_actions: job.recommended_actions ?? diskJob.recommended_actions,
+          company_size: job.company_size ?? diskJob.company_size,
         });
-      } else if (!job.id && !diskUrls.has(job.url)) {
-        synced.push(job);
       }
     }
     return synced;
@@ -257,16 +279,71 @@ export async function runPipeline(
     let totalNewlyScannedJobs = 0;
     let evaluatedJobsCount = 0;
 
-    if (isCancelled()) {
-      isPipelineRunning = false;
-      currentPipelineResult = { cancelled: true, summary: "Scan cancelled by user." };
-      return { success: false, cancelled: true, summary: "Scan cancelled by user.", logs };
-    }
-
     const scanStartTime = Date.now();
     const evalStartTime = Date.now();
 
-    // Callback to process, evaluate with AI, and persist jobs IMMEDIATELY as each batch is scraped
+    const evalQueue: Job[] = [];
+    let isScraperDone = false;
+
+    activeWorkingInventory = workingInventory;
+    activeEvalQueue = evalQueue;
+
+    // Concurrent background evaluator worker
+    const runConcurrentEvaluator = async () => {
+      if (!config.auto_evaluate) return;
+      const selectedModel = config.gemini_model || "gemini-3.1-flash-lite";
+      const BATCH_SIZE = 5;
+
+      while (!isCancelled() && (!isScraperDone || evalQueue.length > 0)) {
+        if (evalQueue.length === 0) {
+          await new Promise((r) => setTimeout(r, 250));
+          continue;
+        }
+
+        const chunk = evalQueue.splice(0, BATCH_SIZE);
+        const chunkTitles = chunk.map((j) => `"${j.title}" @ ${j.company}`).join(", ");
+
+        addLog("GEMINI_AI", `[PARALLEL EVAL] Evaluating batch of ${chunk.length} job(s) with Gemini AI (${selectedModel})...`);
+        addLog("GEMINI_AI", `Evaluating: ${chunkTitles}...`);
+
+        try {
+          const evalResults = await batchEvaluateJobsWithGemini(chunk, resume.content, config);
+
+          for (const resItem of evalResults) {
+            const jobInInv = workingInventory.find((j) => j.id === resItem.jobId);
+            if (jobInInv) {
+              jobInInv.score = resItem.evaluation.score;
+              jobInInv.match_level = resItem.evaluation.match_level;
+              jobInInv.summary = resItem.evaluation.summary;
+              jobInInv.reasons = resItem.evaluation.reasons;
+              jobInInv.missing_skills = resItem.evaluation.missing_skills;
+              jobInInv.recommended_actions = resItem.evaluation.recommended_actions;
+              jobInInv.model_used = resItem.evaluation.model_used;
+              jobInInv.processed_at = new Date().toISOString();
+              jobInInv.status = "evaluated";
+              evaluatedJobsCount++;
+
+              addLog("GEMINI_AI", `[EVAL DONE] "${jobInInv.title}" @ ${jobInInv.company} -> Score: ${jobInInv.score}/100 [${jobInInv.match_level}]`);
+            }
+          }
+
+          // Save updated scores to disk immediately so UI reflects AI evaluations in real time!
+          const syncedBatch = syncWorkingInventoryWithDisk(workingInventory);
+          workingInventory.length = 0;
+          workingInventory.push(...syncedBatch);
+          saveJobsDB(workingInventory);
+          try {
+            generateMarkdownReport(workingInventory, undefined, false);
+          } catch (e) {
+            // ignore
+          }
+        } catch (chunkErr: any) {
+          addLog("ERROR", `Failed to evaluate chunk: ${chunkErr?.message || chunkErr}`);
+        }
+      }
+    };
+
+    // Non-blocking callback: Normalizes, persists new jobs immediately to database, and enqueues for AI evaluation
     const onBatchFetched = async (rawBatch: Omit<Job, 'id'>[]) => {
       try {
         if (isCancelled()) return;
@@ -301,56 +378,13 @@ export async function runPipeline(
           return {
             ...c,
             id,
+            status: "new" as const,
           };
         });
 
         totalNewlyScannedJobs += batchNormalizedJobs.length;
 
-        // Filter jobs in this batch that need Gemini evaluation
-        const batchNeedingEval = batchNormalizedJobs.filter(
-          (j) => j.status === "new" || j.score === undefined
-        );
-
-        if (config.auto_evaluate && batchNeedingEval.length > 0 && !isCancelled()) {
-          const selectedModel = config.gemini_model || "gemini-3.1-flash-lite";
-          const totalToEval = batchNeedingEval.length;
-          addLog("GEMINI_AI", `[PARALLEL EVAL] Evaluating batch of ${totalToEval} job(s) with Gemini AI (${selectedModel})...`);
-
-          const BATCH_SIZE = 5;
-          for (let i = 0; i < batchNeedingEval.length; i += BATCH_SIZE) {
-            if (isCancelled()) break;
-            const chunk = batchNeedingEval.slice(i, i + BATCH_SIZE);
-            const chunkTitles = chunk.map((j) => `"${j.title}" @ ${j.company}`).join(", ");
-
-            addLog("GEMINI_AI", `Evaluating: ${chunkTitles}...`);
-
-            try {
-              const evalResults = await batchEvaluateJobsWithGemini(chunk, resume.content, config);
-
-              for (const resItem of evalResults) {
-                const job = chunk.find((j) => j.id === resItem.jobId);
-                if (job) {
-                  job.score = resItem.evaluation.score;
-                  job.match_level = resItem.evaluation.match_level;
-                  job.summary = resItem.evaluation.summary;
-                  job.reasons = resItem.evaluation.reasons;
-                  job.missing_skills = resItem.evaluation.missing_skills;
-                  job.recommended_actions = resItem.evaluation.recommended_actions;
-                  job.model_used = resItem.evaluation.model_used;
-                  job.processed_at = new Date().toISOString();
-                  job.status = "evaluated";
-                  evaluatedJobsCount++;
-
-                  addLog("GEMINI_AI", `[EVAL DONE] "${job.title}" @ ${job.company} -> Score: ${job.score}/100 [${job.match_level}]`);
-                }
-              }
-            } catch (chunkErr: any) {
-              addLog("ERROR", `Failed to evaluate chunk: ${chunkErr?.message || chunkErr}`);
-            }
-          }
-        }
-
-        // Merge evaluated batch into workingInventory
+        // Merge newly fetched batch into workingInventory
         for (const bJob of batchNormalizedJobs) {
           const existingIdx = workingInventory.findIndex((j) => j.id === bJob.id || j.url === bJob.url);
           if (existingIdx >= 0) {
@@ -360,7 +394,15 @@ export async function runPipeline(
           }
         }
 
-        // Sync and record progress to disk immediately!
+        // Enqueue jobs needing Gemini AI evaluation into the parallel evaluation queue
+        if (config.auto_evaluate) {
+          const needsEval = batchNormalizedJobs.filter(
+            (j) => (j.status === "new" || j.score === undefined) && !evalQueue.some((q) => q.id === j.id)
+          );
+          evalQueue.push(...needsEval);
+        }
+
+        // Save progress to disk IMMEDIATELY so new postings populate UI right away!
         const syncedBatch = syncWorkingInventoryWithDisk(workingInventory);
         workingInventory.length = 0;
         workingInventory.push(...syncedBatch);
@@ -371,12 +413,19 @@ export async function runPipeline(
           // ignore
         }
 
-        addLog("NORMALIZER", `[PROGRESS SAVED] Recorded ${batchNormalizedJobs.length} posting(s) to database (Total inventory: ${workingInventory.length}).`);
+        addLog(
+          "SCANNER",
+          `[PARALLEL DISPATCH] Scraped ${batchNormalizedJobs.length} posting(s). Saved to database immediately (Total inventory: ${workingInventory.length}). Enqueued for parallel AI evaluation.`
+        );
       } catch (err: any) {
         addLog("ERROR", `Error processing fetched batch: ${err?.message || err}`);
       }
     };
 
+    // Launch background parallel evaluator worker
+    const evalWorkerPromise = runConcurrentEvaluator();
+
+    // Launch live LinkedIn scraper continuously
     const scanData = await fetchLiveLinkedInJobs(
       activeCompanies,
       targetRoles,
@@ -390,6 +439,12 @@ export async function runPipeline(
       onBatchFetched,
       config.enable_min_company_size ? config.min_company_size : 0
     );
+
+    isScraperDone = true;
+
+    // Await parallel AI evaluator worker to finish remaining queued jobs
+    await evalWorkerPromise;
+
     const liveCandidates = scanData.jobs;
     const totalScannedCount = scanData.totalScanned;
     const scanDurationSec = ((Date.now() - scanStartTime) / 1000).toFixed(1);
@@ -400,34 +455,6 @@ export async function runPipeline(
     }
 
     addLog("SCANNER", `[STAGE COMPLETE] Scanning & parallel evaluation completed in ${scanDurationSec}s. Scanned ${totalScannedCount} raw postings; ${workingInventory.length} total jobs now in database.`);
-
-    // Pass for any remaining un-evaluated jobs in inventory (e.g. from prior un-evaluated imports)
-    const remainingNeedingEval = workingInventory.filter((j) => j.status === "new" || j.score === undefined);
-    if (config.auto_evaluate && remainingNeedingEval.length > 0 && !isCancelled()) {
-      addLog("GEMINI_AI", `Evaluating remaining ${remainingNeedingEval.length} un-evaluated job(s)...`);
-      const BATCH_SIZE = 5;
-      for (let i = 0; i < remainingNeedingEval.length; i += BATCH_SIZE) {
-        if (isCancelled()) break;
-        const chunk = remainingNeedingEval.slice(i, i + BATCH_SIZE);
-        const evalResults = await batchEvaluateJobsWithGemini(chunk, resume.content, config);
-        for (const resItem of evalResults) {
-          const job = chunk.find((j) => j.id === resItem.jobId);
-          if (job) {
-            job.score = resItem.evaluation.score;
-            job.match_level = resItem.evaluation.match_level;
-            job.summary = resItem.evaluation.summary;
-            job.reasons = resItem.evaluation.reasons;
-            job.missing_skills = resItem.evaluation.missing_skills;
-            job.recommended_actions = resItem.evaluation.recommended_actions;
-            job.model_used = resItem.evaluation.model_used;
-            job.processed_at = new Date().toISOString();
-            job.status = "evaluated";
-            evaluatedJobsCount++;
-            addLog("GEMINI_AI", `[EVAL DONE] "${job.title}" @ ${job.company} -> Score: ${job.score}/100 [${job.match_level}]`);
-          }
-        }
-      }
-    }
 
     if (isCancelled()) {
       isPipelineRunning = false;
@@ -500,5 +527,9 @@ export async function runPipeline(
     currentPipelineResult = { success: false, summary: `Pipeline execution failed: ${error.message}` };
     addLog("ERROR", `Pipeline execution failed: ${error.message}`);
     return { success: false, logs, summary: `Pipeline execution failed: ${error.message}` };
+  } finally {
+    activeWorkingInventory = null;
+    activeEvalQueue = null;
+    isPipelineRunning = false;
   }
 }

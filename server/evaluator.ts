@@ -226,6 +226,8 @@ export function sanitizeJobEvaluation(job: Job, preferredLocations: string[], co
     /application closed/i.test(cleanDesc) ||
     /no longer active/i.test(cleanDesc);
 
+  const isUnEvaluated = (job.score === undefined || job.score === null) && (job.status === "new" || !job.processed_at);
+
   if (isClosedText || hasHardBlocker) {
     newScore = Math.min(newScore !== undefined ? newScore : 15, 15);
     newMatchLevel = "Unmatched";
@@ -235,7 +237,7 @@ export function sanitizeJobEvaluation(job: Job, preferredLocations: string[], co
         cleanedMissing = [closedNote, ...cleanedMissing];
       }
     }
-  } else if (isLackingDetails) {
+  } else if (!isUnEvaluated && isLackingDetails) {
     newScore = Math.min(newScore !== undefined ? newScore : 45, 45);
     newMatchLevel = "Weak Match";
     const shortDescNote = "Job description is too brief and lacks minimum qualifications or required role details.";
@@ -245,7 +247,7 @@ export function sanitizeJobEvaluation(job: Job, preferredLocations: string[], co
     if (!cleanedReasons.some((r) => r.toLowerCase().includes("brief description"))) {
       cleanedReasons = [shortDescNote, ...cleanedReasons];
     }
-  } else if (isSalaryBelow || hasSalaryTextFlag) {
+  } else if (!isUnEvaluated && (isSalaryBelow || hasSalaryTextFlag)) {
     newScore = Math.min(newScore !== undefined ? newScore : 45, 45);
     newMatchLevel = "Weak Match";
     if (salaryBelowNote && !cleanedReasons.some((r) => r.toLowerCase().includes("below target salary"))) {
@@ -258,7 +260,7 @@ export function sanitizeJobEvaluation(job: Job, preferredLocations: string[], co
         cleanedMissing = [`Disclosed annual salary is below target minimum ($${targetMinSalary.toLocaleString()})`, ...cleanedMissing];
       }
     }
-  } else if (hasYoeGap || hasOverQual || hasMissingCoreSkill) {
+  } else if (!isUnEvaluated && (hasYoeGap || hasOverQual || hasMissingCoreSkill)) {
     newScore = Math.min(newScore !== undefined ? newScore : 45, 45);
     newMatchLevel = "Weak Match";
     if (isGraduateRole && candidateYoe >= 3) {
@@ -270,7 +272,7 @@ export function sanitizeJobEvaluation(job: Job, preferredLocations: string[], co
         cleanedReasons = [overQualMsg, ...cleanedReasons];
       }
     }
-  } else {
+  } else if (!isUnEvaluated) {
     if (newScore === undefined || newScore === null) {
       newScore = 75;
     }

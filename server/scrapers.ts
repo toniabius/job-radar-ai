@@ -1,6 +1,7 @@
 import { Job } from "../src/types.js";
 import { getLinkedInLocationParams, isLocationMatch } from "./utils.js";
 import { batchDetermineJobSalaries, extractCompanyEmployeeCount } from "./evaluator.js";
+import { fetchCompanyHeadcountFromLinkedInEndpoint } from "./gemini.js";
 
 let lastLinkedInReqTime = 0;
 
@@ -308,7 +309,18 @@ export async function fetchLiveLinkedInJobs(
                 continue;
               }
 
-              const parsedSize = extractCompanyEmployeeCount(rawHtml || fullDescription);
+              let parsedSize = extractCompanyEmployeeCount(rawHtml || fullDescription);
+              if (!parsedSize && minCompanySize && minCompanySize > 0) {
+                const epRes = await fetchCompanyHeadcountFromLinkedInEndpoint(card.rawComp);
+                if (epRes) {
+                  parsedSize = {
+                    min: epRes.minCount ?? epRes.employeeCount ?? 0,
+                    max: epRes.maxCount ?? epRes.employeeCount ?? Infinity,
+                    text: epRes.sizeText
+                  };
+                }
+              }
+
               if (minCompanySize && minCompanySize > 0 && parsedSize && parsedSize.max < minCompanySize) {
                 if (addLog) {
                   addLog("SCANNER", `Strictly ignored "${card.jobTitle}" @ ${card.rawComp}: Company size (${parsedSize.text}) is below minimum target of ${minCompanySize} employees.`);

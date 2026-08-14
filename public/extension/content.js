@@ -178,10 +178,13 @@
           <label for="jr-cb-override" style="all: unset !important; cursor: pointer !important; user-select: none !important; font-size: 11px !important; color: #e2e8f0 !important; font-family: system-ui, sans-serif !important;">Override existing form values</label>
         </div>
         <button id="jr-btn-autofill" class="jr-btn">
-          <span>⚡ AutoFill</span>
+          <span>⚡ AutoFill Form</span>
         </button>
-        <button id="jr-btn-ai-answer" class="jr-btn-secondary">
-          <span>✨ Answer Open Questions with AI</span>
+        <button id="jr-btn-ai-autofill-all" class="jr-btn-secondary" style="margin-top: 6px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4);">
+          <span>🤖 AI AutoFill All Questions</span>
+        </button>
+        <button id="jr-btn-ai-answer" class="jr-btn-secondary" style="margin-top: 6px;">
+          <span>✨ Answer Highlighted Question</span>
         </button>
         <div id="jr-status-text" class="jr-status">Ready</div>
       </div>
@@ -214,6 +217,8 @@
     }
 
     document.getElementById('jr-btn-autofill').addEventListener('click', handleAutoFillCurrentPage);
+    const aiAllBtn = document.getElementById('jr-btn-ai-autofill-all');
+    if (aiAllBtn) aiAllBtn.addEventListener('click', handleAIAutoFillForm);
     document.getElementById('jr-btn-ai-answer').addEventListener('click', handleAnswerOpenQuestions);
 
     // Make panel draggable
@@ -363,8 +368,18 @@
           valueToSet = activeProfile.phone;
         } else if (combinedKey.includes('how did you hear') || combinedKey.includes('hear about us') || combinedKey.includes('referral source') || combinedKey.includes('how did you find')) {
           valueToSet = activeProfile.howDidYouHear || 'LinkedIn';
-        } else if (combinedKey.includes('street address') || combinedKey.includes('address line 1') || combinedKey.includes('street') || (combinedKey.includes('address') && !combinedKey.includes('email'))) {
-          valueToSet = activeProfile.streetAddress || activeProfile.city;
+        } else if (
+          combinedKey.includes('currently located') ||
+          combinedKey.includes('where are you located') ||
+          combinedKey.includes('your location') ||
+          combinedKey.includes('current location') ||
+          combinedKey.includes('start typing') ||
+          combinedKey.includes('street address') ||
+          combinedKey.includes('address line 1') ||
+          combinedKey.includes('street') ||
+          (combinedKey.includes('address') && !combinedKey.includes('email'))
+        ) {
+          valueToSet = activeProfile.city ? `${activeProfile.city}, ${activeProfile.state || ''}`.replace(/,\s*$/, '') : activeProfile.streetAddress || activeProfile.city;
         } else if (combinedKey.includes('city') || combinedKey.includes('town')) {
           valueToSet = activeProfile.city;
         } else if (combinedKey.includes('postal') || combinedKey.includes('zip') || combinedKey.includes('postcode')) {
@@ -383,8 +398,16 @@
           valueToSet = activeProfile.desiredSalary;
         } else if (combinedKey.includes('years of experience') || combinedKey.includes('years experience') || combinedKey.includes('how many years') || combinedKey.includes('total experience')) {
           valueToSet = activeProfile.yearsExperience;
-        } else if (combinedKey.includes('notice period') || combinedKey.includes('how soon can you start') || combinedKey.includes('availability') || combinedKey.includes('start date')) {
-          valueToSet = activeProfile.noticePeriod;
+        } else if (
+          combinedKey.includes('notice period') ||
+          combinedKey.includes('how soon can you start') ||
+          combinedKey.includes('when can you start') ||
+          combinedKey.includes('start a new role') ||
+          combinedKey.includes('pick date') ||
+          combinedKey.includes('availability') ||
+          combinedKey.includes('start date')
+        ) {
+          valueToSet = activeProfile.noticePeriod || '2 weeks';
         } else if (
           combinedKey.includes('sponsorship') ||
           combinedKey.includes('require sponsorship') ||
@@ -803,105 +826,231 @@
     return container.textContent.trim();
   }
 
+  // Safely trigger full pointer & click event chain on custom ATS elements (Ashby, Greenhouse, Lever, Workday)
+  function triggerClickElement(el) {
+    if (!el) return false;
+    try {
+      el.focus();
+    } catch (e) {}
+
+    const opts = { bubbles: true, cancelable: true, view: window };
+
+    // Fire complete mouse & pointer events for React/Vue synthetic listeners
+    el.dispatchEvent(new PointerEvent('pointerdown', opts));
+    el.dispatchEvent(new MouseEvent('mousedown', opts));
+    el.dispatchEvent(new PointerEvent('pointerup', opts));
+    el.dispatchEvent(new MouseEvent('mouseup', opts));
+    el.dispatchEvent(new MouseEvent('click', opts));
+
+    if (typeof el.click === 'function') {
+      try { el.click(); } catch (e) {}
+    }
+
+    // Check for associated input[type="radio"] or input[type="checkbox"]
+    const input = el.tagName === 'INPUT' ? el : el.querySelector('input') || (el.getAttribute('for') ? document.getElementById(el.getAttribute('for')) : null);
+    if (input) {
+      if (!input.checked) {
+        input.checked = true;
+        const tracker = input._valueTracker;
+        if (tracker) tracker.setValue(false);
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('click', { bubbles: true }));
+      }
+    }
+    return true;
+  }
+
+  // Check if an option inside a container actually became checked/selected
+  function isChoiceChecked(container, targetEl) {
+    if (!container) return false;
+    // Check if target element itself is checked/active
+    if (targetEl) {
+      if (targetEl.tagName === 'INPUT' && targetEl.checked) return true;
+      const assocInput = targetEl.querySelector('input') || (targetEl.getAttribute('for') ? document.getElementById(targetEl.getAttribute('for')) : null);
+      if (assocInput && assocInput.checked) return true;
+
+      const ariaChecked = targetEl.getAttribute('aria-checked');
+      const ariaPressed = targetEl.getAttribute('aria-pressed');
+      if (ariaChecked === 'true' || ariaPressed === 'true') return true;
+
+      const classList = targetEl.className || '';
+      if (typeof classList === 'string' && (classList.includes('active') || classList.includes('selected') || classList.includes('checked') || classList.includes('is-selected'))) {
+        return true;
+      }
+    }
+
+    // Check if container now holds any checked input or aria-checked element
+    const checkedChild = container.querySelector('input:checked, [aria-checked="true"], [aria-pressed="true"], .active, .selected, .checked');
+    return Boolean(checkedChild);
+  }
+
   // Select radio button or custom option inside group
   function selectRadioInGroup(container, targetChoice) {
+    if (!container || !targetChoice) return false;
     const targetLower = targetChoice.toLowerCase().trim();
-    const radioInputs = container.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"]');
-
-    let clicked = false;
 
     const isYes = targetLower === 'yes' || targetLower.startsWith('yes') || targetLower === 'true' || targetLower.includes('authorized') || (targetLower.includes('will require') && !targetLower.includes('not'));
     const isNo = targetLower === 'no' || targetLower.startsWith('no') || targetLower === 'false' || targetLower.includes('will not require') || targetLower.includes('do not require');
 
-    // First pass: try input labels
-    radioInputs.forEach((input) => {
-      let optionText = '';
-      if (input.id) {
-        const label = container.querySelector(`label[for="${input.id}"]`);
-        if (label) optionText = label.textContent;
-      }
-      if (!optionText) {
-        const parentLabel = input.closest('label');
-        if (parentLabel) optionText = parentLabel.textContent;
-      }
-      if (!optionText) {
-        optionText = input.value || input.getAttribute('aria-label') || '';
-      }
+    // Find all clickable option targets (inputs, labels, custom buttons, roles)
+    const options = Array.from(container.querySelectorAll(
+      'input[type="radio"], input[type="checkbox"], label, button, [role="radio"], [role="option"], [role="button"], div[class*="radio"], div[class*="option"], div[class*="choice"], div[class*="button"], span[class*="radio"]'
+    ));
 
-      const optionLower = optionText.toLowerCase().trim();
+    let bestMatchEl = null;
 
-      let isMatch = false;
+    for (const el of options) {
+      let text = el.textContent || el.value || el.getAttribute('aria-label') || '';
+      if (el.id && el.tagName === 'INPUT') {
+        const lbl = container.querySelector(`label[for="${el.id}"]`);
+        if (lbl) text = lbl.textContent;
+      }
+      const textLower = text.toLowerCase().trim();
+      if (!textLower) continue;
 
+      let match = false;
       if (isYes) {
-        if (
-          optionLower === 'yes' ||
-          optionLower.startsWith('yes') ||
-          optionLower.includes('authorized') ||
-          (optionLower.includes('will require') && !optionLower.includes('not'))
-        ) {
-          isMatch = true;
+        if (textLower === 'yes' || textLower.startsWith('yes') || textLower.includes('authorized') || (textLower.includes('will require') && !textLower.includes('not'))) {
+          match = true;
         }
       } else if (isNo) {
-        if (
-          optionLower === 'no' ||
-          optionLower.startsWith('no') ||
-          optionLower.includes('will not require') ||
-          optionLower.includes('do not require') ||
-          optionLower.includes('not require') ||
-          optionLower.includes('no sponsorship')
-        ) {
-          isMatch = true;
+        if (textLower === 'no' || textLower.startsWith('no') || textLower.includes('will not require') || textLower.includes('do not require') || textLower.includes('not require') || textLower.includes('no sponsorship')) {
+          match = true;
         }
       }
 
-      if (!isMatch) {
-        if (optionLower === targetLower || (targetLower.length > 3 && optionLower.includes(targetLower)) || (optionLower.length > 3 && targetLower.includes(optionLower))) {
-          isMatch = true;
+      if (!match) {
+        if (textLower === targetLower || (targetLower.length > 3 && textLower.includes(targetLower)) || (textLower.length > 3 && targetLower.includes(textLower))) {
+          match = true;
         }
       }
 
-      if (isMatch) {
-        if (!input.checked) {
-          input.click();
-          input.checked = true;
-          input.dispatchEvent(new Event('change', { bubbles: true }));
-          input.dispatchEvent(new Event('click', { bubbles: true }));
-        }
-        clicked = true;
+      if (match) {
+        bestMatchEl = el;
+        break;
       }
+    }
+
+    if (bestMatchEl) {
+      triggerClickElement(bestMatchEl);
+
+      // Verify that option actually became checked before marking container as autofilled
+      if (isChoiceChecked(container, bestMatchEl)) {
+        container.classList.add('jr-autofilled-field');
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  // AI-Powered Universal AutoFill for any complex, ambiguous, or unhandled form questions
+  async function handleAIAutoFillForm() {
+    const statusEl = document.getElementById('jr-status-text');
+    if (statusEl) statusEl.innerText = '🤖 Scanning page questions with AI...';
+
+    await fetchCandidateProfile();
+
+    if (!activeProfile) {
+      if (statusEl) statusEl.innerText = '❌ Error: Candidate profile unavailable';
+      alert('Job Radar server is not running or candidate profile is empty.');
+      return;
+    }
+
+    // First perform fast local rule-based pass
+    await handleAutoFillCurrentPage();
+
+    // Now gather any remaining unfilled input questions or radio/choice groups on the page
+    const unansweredGroups = Array.from(document.querySelectorAll(
+      'fieldset, div.fb-dash-form-element, div.jobs-easy-apply-form-section__group, div[role="radiogroup"], div.form-group, div.form-entry, div.question-container, div.application-question, div.form-field, div[data-automation-id*="question"], div[data-automation-id*="formField"], div.section-field, .artdeco-form__item, .jobs-easy-apply-form-element, div[data-test-form-element], div.ashby-application-form-question, div[class*="question"], div[class*="Question"], div[class*="field"], div[class*="Field"]'
+    )).filter((group) => {
+      if (group.closest('#jr-autofill-panel')) return false;
+      const isFilled = isChoiceChecked(group) || Array.from(group.querySelectorAll('input, textarea')).some(i => (i.value || '').trim().length > 0);
+      return !isFilled;
     });
 
-    // Fallback: search label elements directly
-    if (!clicked) {
-      const labels = container.querySelectorAll('label, button, [role="radio"], [role="option"], .radio-label, .form-check-label');
-      labels.forEach((label) => {
-        const textLower = label.textContent.toLowerCase().trim();
-        let isMatch = false;
+    if (unansweredGroups.length === 0) {
+      if (statusEl) statusEl.innerText = '✅ All questions on page already filled!';
+      return;
+    }
 
-        if (isYes) {
-          if (textLower === 'yes' || textLower.startsWith('yes') || textLower.includes('authorized')) {
-            isMatch = true;
+    if (statusEl) statusEl.innerText = `🤖 Sending ${unansweredGroups.length} question(s) to Gemini AI...`;
+
+    const questionsPayload = unansweredGroups.slice(0, 15).map((group, idx) => {
+      const qText = getQuestionTextForGroup(group);
+      const choices = Array.from(group.querySelectorAll('button, label, input[type="radio"], [role="radio"], [role="option"], [role="button"]'))
+        .map(el => (el.textContent || el.value || '').trim())
+        .filter(t => t && t.length > 0 && t.length < 60);
+
+      // Deduplicate choices
+      const uniqueChoices = Array.from(new Set(choices));
+
+      const input = group.querySelector('input[type="text"], textarea, input:not([type])');
+      const inputType = input ? input.tagName.toLowerCase() : (uniqueChoices.length > 0 ? 'choice' : 'text');
+
+      return {
+        id: idx,
+        question: qText,
+        choices: uniqueChoices.length > 0 ? uniqueChoices : undefined,
+        inputType
+      };
+    });
+
+    let aiRes = await safeSendMessage({
+      action: 'PARSE_FORM_QUESTIONS',
+      questions: questionsPayload,
+      jobContext: document.title || 'Job Application'
+    });
+
+    if (!aiRes || !aiRes.success || !aiRes.mappings) {
+      try {
+        const directRes = await fetch('http://localhost:3000/api/candidate-profile/parse-form-questions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            questions: questionsPayload,
+            jobContext: document.title || 'Job Application'
+          })
+        });
+        if (directRes.ok) {
+          const data = await directRes.json();
+          if (data && data.mappings) {
+            aiRes = { success: true, mappings: data.mappings };
           }
-        } else if (isNo) {
-          if (textLower === 'no' || textLower.startsWith('no') || textLower.includes('will not require') || textLower.includes('do not require') || textLower.includes('not require')) {
-            isMatch = true;
-          }
-        } else if (textLower === targetLower || (targetLower.length > 3 && textLower.includes(targetLower))) {
-          isMatch = true;
         }
+      } catch (e) {
+        // ignore
+      }
+    }
 
-        if (isMatch) {
-          label.click();
-          clicked = true;
+    if (aiRes && aiRes.success && Array.isArray(aiRes.mappings)) {
+      let aiFilledCount = 0;
+      aiRes.mappings.forEach((m) => {
+        const groupIndex = typeof m.id === 'number' ? m.id : parseInt(m.id, 10);
+        const group = unansweredGroups[groupIndex];
+        if (!group) return;
+
+        if (m.choiceToClick) {
+          if (selectRadioInGroup(group, m.choiceToClick)) {
+            aiFilledCount++;
+          }
+        } else if (m.answer) {
+          const input = group.querySelector('input, textarea, select');
+          if (input) {
+            setNativeInputValue(input, m.answer);
+            group.classList.add('jr-autofilled-field');
+            aiFilledCount++;
+          }
         }
       });
-    }
 
-    if (clicked) {
-      container.classList.add('jr-autofilled-field');
+      if (statusEl) {
+        statusEl.innerText = `✨ AI successfully filled ${aiFilledCount} custom question(s)!`;
+      }
+    } else {
+      if (statusEl) statusEl.innerText = '⚠️ AI processing completed with 0 new fields.';
     }
-
-    return clicked;
   }
 
   // Find label text associated with input

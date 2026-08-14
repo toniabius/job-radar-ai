@@ -922,7 +922,12 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                             type="checkbox"
                             checked={isMinCompanySizeEnabled}
                             onChange={(e) => {
-                              const newCfg = { ...config, enable_min_company_size: e.target.checked };
+                              const isMinSizeEnabled = e.target.checked;
+                              const newCfg = {
+                                ...config,
+                                enable_min_company_size: isMinSizeEnabled,
+                                target_companies_enabled: !isMinSizeEnabled,
+                              };
                               setConfig(newCfg);
                               saveUpdatedConfig(newCfg);
                             }}
@@ -1324,7 +1329,14 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                           <input
                             type="checkbox"
                             checked={isCompanyFilteringEnabled}
-                            onChange={(e) => saveUpdatedConfig({ ...config, target_companies_enabled: e.target.checked })}
+                            onChange={(e) => {
+                              const isTargetEnabled = e.target.checked;
+                              saveUpdatedConfig({
+                                ...config,
+                                target_companies_enabled: isTargetEnabled,
+                                enable_min_company_size: !isTargetEnabled,
+                              });
+                            }}
                             className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
                           />
                           <Building className={`w-4 h-4 ${isCompanyFilteringEnabled ? 'text-emerald-600' : 'text-slate-400'}`} />

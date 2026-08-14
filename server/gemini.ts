@@ -60,6 +60,105 @@ export function getGeminiClient(): GoogleGenAI {
   return new GoogleGenAI({ apiKey });
 }
 
+export async function parseFormQuestionsWithAI(
+  questions: Array<{ id: string | number; question: string; choices?: string[]; inputType?: string }>,
+  candidateProfile?: any,
+  jobContext?: string
+): Promise<Array<{ id: string | number; answer: string; choiceToClick?: string }>> {
+  if (!questions || questions.length === 0) return [];
+
+  const apiKey = getCleanApiKey();
+  if (!apiKey || !hasValidApiKey()) {
+    console.warn("[AI FORM PARSER] Gemini API key not set, returning empty AI mappings");
+    return [];
+  }
+
+  const ai = getGeminiClient();
+
+  const profileSummary = {
+    name: `${candidateProfile?.firstName || ''} ${candidateProfile?.lastName || ''}`.trim(),
+    preferredName: candidateProfile?.preferredName || candidateProfile?.firstName || '',
+    email: candidateProfile?.email || '',
+    phone: candidateProfile?.phone || '',
+    location: `${candidateProfile?.city || ''}, ${candidateProfile?.state || ''}, ${candidateProfile?.country || ''}`.replace(/^[\s,]+|[\s,]+$/g, ''),
+    city: candidateProfile?.city || '',
+    state: candidateProfile?.state || '',
+    zipCode: candidateProfile?.zipCode || '',
+    country: candidateProfile?.country || '',
+    legallyAuthorizedToWorkInUS: candidateProfile?.legallyAuthorized || 'Yes',
+    requiresVisaSponsorship: candidateProfile?.sponsorshipRequired || 'No',
+    workAuthorizationStatus: candidateProfile?.workAuthorization || 'Authorized to work',
+    noticePeriodOrStartDate: candidateProfile?.noticePeriod || '2 weeks',
+    desiredSalary: candidateProfile?.desiredSalary || '',
+    yearsExperience: candidateProfile?.yearsExperience || '',
+    hybridOrInOfficeAvailability: 'Yes, willing to work in-office or hybrid as required',
+    relocation: candidateProfile?.relocation || 'Yes',
+    gender: candidateProfile?.gender || 'Decline to Self-Identify',
+    ethnicity: candidateProfile?.ethnicity || 'Decline to Self-Identify',
+    veteranStatus: candidateProfile?.veteranStatus || 'I am not a protected veteran',
+    disabilityStatus: candidateProfile?.disabilityStatus || 'No, I do not have a disability',
+    workExperience: (candidateProfile?.workExperience || []).map((w: any) => ({
+      title: w.title,
+      company: w.company,
+      duration: `${w.startMonth || ''} ${w.startYear || ''} - ${w.currentlyWorkHere ? 'Present' : `${w.endMonth || ''} ${w.endYear || ''}`}`.trim()
+    })),
+    knowledgeBaseQA: (candidateProfile?.knowledgeBase || []).map((k: any) => ({
+      question: k.questionPattern,
+      answer: k.answer
+    }))
+  };
+
+  const prompt = `You are a high-accuracy job application auto-fill assistant.
+Given a list of application questions on a company's job application form and a candidate's background profile, map each question to the candidate's accurate response.
+
+Candidate Background Context:
+${JSON.stringify(profileSummary, null, 2)}
+${jobContext ? `Job Listing Context:\n${jobContext.slice(0, 1500)}\n` : ''}
+
+Questions to analyze:
+${JSON.stringify(questions, null, 2)}
+
+Requirements for each question:
+1. If "choices" are provided in the question object, "choiceToClick" MUST strictly match one of the exact strings in the choices array!
+2. If the question asks about location/city, use candidate's location (${profileSummary.location || profileSummary.city}).
+3. If the question asks about start date or availability ("When can you start?", "Pick date"), provide a reasonable start date or notice period (e.g. "${profileSummary.noticePeriodOrStartDate}" or a date 2 weeks from today).
+4. If the question asks about office/hybrid attendance ("Are you able to work from our US office..."), answer "Yes" or choose "Yes".
+5. If the question asks about work authorization, sponsorship, EEO (gender, race, veteran, disability), pick the exact matching choice from the choices array.
+6. Return a valid JSON array of objects with schema:
+[
+  {
+    "id": "question id/index from input",
+    "answer": "string answer for text input",
+    "choiceToClick": "exact string from choices array if applicable, otherwise omit or null"
+  }
+]`;
+
+  for (const model of ALL_GEMINI_FALLBACK_MODELS) {
+    try {
+      await enforceGeminiRateLimit(model);
+      const res = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+        }
+      });
+      const text = (res.text || "").trim();
+      if (text) {
+        const cleanJson = text.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+        const parsed = JSON.parse(cleanJson);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      }
+    } catch (err) {
+      console.warn(`[AI FORM PARSER] Model ${model} failed, trying fallback...`, err);
+    }
+  }
+
+  return [];
+}
+
 export async function generateApplicationAnswer(
   question: string,
   jobContext?: string,
@@ -249,6 +348,56 @@ function extractBasicCandidateProfileRegex(rawText: string): any {
   };
 }
 
+export async function fetchCompanyHeadcountFromLinkedInEndpoint(companyName: string): Promise<{
+  employeeCount: number | null;
+  minCount?: number;
+  maxCount?: number;
+  sizeText: string;
+} | null> {
+  if (!companyName || !companyName.trim()) return null;
+
+  const slug = companyName.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (!slug) return null;
+
+  try {
+    const url = `https://www.linkedin.com/company/${slug}`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
+      }
+    });
+
+    if (res.ok) {
+      const html = await res.text();
+      const matches = html.match(/([0-9,]+-[0-9,]+|[0-9,]+\+?)\s+employees?/gi);
+      if (matches && matches.length > 0) {
+        const sizeText = matches[0];
+        const rangeMatch = sizeText.match(/(\d{1,3}(?:,\d{3})*|\d+)\s*[-–—]\s*(\d{1,3}(?:,\d{3})*|\d+)/);
+        if (rangeMatch) {
+          const min = parseInt(rangeMatch[1].replace(/,/g, ""), 10);
+          const max = parseInt(rangeMatch[2].replace(/,/g, ""), 10);
+          return { employeeCount: max, minCount: min, maxCount: max, sizeText };
+        }
+        const plusMatch = sizeText.match(/(\d{1,3}(?:,\d{3})*|\d+)\+/);
+        if (plusMatch) {
+          const min = parseInt(plusMatch[1].replace(/,/g, ""), 10);
+          return { employeeCount: min, minCount: min, maxCount: Infinity, sizeText };
+        }
+        const exactMatch = sizeText.match(/(\d{1,3}(?:,\d{3})*|\d+)/);
+        if (exactMatch) {
+          const val = parseInt(exactMatch[1].replace(/,/g, ""), 10);
+          return { employeeCount: val, minCount: val, maxCount: val, sizeText };
+        }
+      }
+    }
+  } catch (e) {
+    console.warn(`[COMPANY ENDPOINT] Direct endpoint fetch failed for ${companyName}:`, e);
+  }
+
+  return null;
+}
+
 export async function fetchCompanyHeadcountWithAI(
   companyName: string,
   jobDescription?: string
@@ -257,13 +406,22 @@ export async function fetchCompanyHeadcountWithAI(
   minCount?: number;
   maxCount?: number;
   sizeText: string;
-  source: 'job_description' | 'ai_api' | 'unknown';
+  source: 'linkedin_endpoint' | 'job_description' | 'ai_api' | 'unknown';
 }> {
   if (!companyName || !companyName.trim()) {
     return { employeeCount: null, sizeText: "Unknown Company", source: "unknown" };
   }
 
-  // 1. Try regex extraction if job description exists
+  // 1. Try direct HTTP lookup on LinkedIn company endpoint
+  const directEndpointRes = await fetchCompanyHeadcountFromLinkedInEndpoint(companyName);
+  if (directEndpointRes) {
+    return {
+      ...directEndpointRes,
+      source: 'linkedin_endpoint',
+    };
+  }
+
+  // 2. Try regex extraction if job description exists
   if (jobDescription) {
     const plusMatch = jobDescription.match(/(\d{1,3}(?:,\d{3})*|\d+)\s*\+\s*employees?/i);
     if (plusMatch) {

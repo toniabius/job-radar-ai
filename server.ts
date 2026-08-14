@@ -51,11 +51,13 @@ import {
   appendPipelineLog,
   setIsPipelineRunning,
   activePipelineCancelled,
+  removeJobsFromPipelineInventory,
 } from "./server/pipeline.js";
 import {
   hasValidApiKey,
   getGeminiClient,
   enforceGeminiRateLimit,
+  parseFormQuestionsWithAI,
 } from "./server/gemini.js";
 
 const app = express();
@@ -553,6 +555,22 @@ app.post("/api/candidate-profile/generate-answer", async (req, res) => {
   }
 });
 
+app.post("/api/candidate-profile/parse-form-questions", async (req, res) => {
+  try {
+    const { questions, jobContext } = req.body || {};
+    if (!Array.isArray(questions) || questions.length === 0) {
+      return res.status(400).json({ error: "Questions array is required" });
+    }
+
+    const candidateProfile = loadCandidateProfile();
+    const mappings = await parseFormQuestionsWithAI(questions, candidateProfile, jobContext);
+    res.json({ success: true, mappings });
+  } catch (err: any) {
+    console.error("Parse form questions error:", err);
+    res.status(500).json({ error: err.message || "Failed to parse form questions with AI" });
+  }
+});
+
 app.post("/api/candidate-profile/ai-parse", async (req, res) => {
   try {
     const { text } = req.body || {};
@@ -706,6 +724,7 @@ app.post("/api/jobs", (req, res) => {
 
 app.delete("/api/jobs/:id", (req, res) => {
   const { id } = req.params;
+  removeJobsFromPipelineInventory([id]);
   let jobs = loadJobsDB();
   jobs = jobs.filter((j) => j.id !== id);
   saveJobsDB(jobs);
@@ -718,6 +737,7 @@ app.post("/api/jobs/bulk-delete", (req, res) => {
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: "ids array required" });
     }
+    removeJobsFromPipelineInventory(ids);
     const deleteSet = new Set(ids);
     let jobs = loadJobsDB();
     const initialCount = jobs.length;
@@ -761,6 +781,8 @@ app.post("/api/jobs/bulk-applied", (req, res) => {
 });
 
 app.post("/api/jobs/reset", (req, res) => {
+  const jobs = loadJobsDB();
+  removeJobsFromPipelineInventory(jobs.map((j) => j.id));
   saveJobsDB([]);
   generateMarkdownReport([]);
   res.json({ success: true, jobs: [] });
@@ -772,6 +794,8 @@ app.post("/api/jobs/delete-below-threshold", (req, res) => {
     const threshold = typeof req.body?.threshold === "number" ? req.body.threshold : (configObj.minimum_score || 65);
     let jobs = loadJobsDB();
     const totalBefore = jobs.length;
+    const deletedIds = jobs.filter((j) => j.score !== undefined && (j.score || 0) < threshold).map((j) => j.id);
+    removeJobsFromPipelineInventory(deletedIds);
     jobs = jobs.filter((j) => j.score === undefined || (j.score || 0) >= threshold);
     const deletedCount = totalBefore - jobs.length;
     saveJobsDB(jobs);
@@ -1135,7 +1159,7 @@ app.get("/api/report", (req, res) => {
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: "spa",
     });
     app.use(vite.middlewares);
